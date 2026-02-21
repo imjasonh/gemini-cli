@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   test-sandbox:
-    name: 'Sandbox (${{ matrix.sandbox }})'
+    name: 'Sandbox (${{ matrix.sandbox }} ${{ matrix.os }})'
     runs-on: '${{ matrix.os }}'
     strategy:
       fail-fast: false
