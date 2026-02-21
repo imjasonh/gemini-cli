@@ -50,6 +50,7 @@ packages/devtools/src/_client-assets.ts
 .integration-tests/
 packages/vscode-ide-companion/*.vsix
 packages/cli/download-ripgrep*/
+packages/cli/native/landlock-helper
 
 # GHA credentials
 gha-creds-*.json

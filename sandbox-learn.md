@@ -107,3 +107,17 @@
 - Seccomp returns: ALLOW = `0x7FFF0000`, ERRNO|EPERM = `0x00050001`
 - Syscall numbers differ between x86_64 and aarch64; must use correct table
 - BWRAP_SECCOMP=off disables the filter for debugging/compatibility
+
+## Native Binary Build & Cleanup
+
+- `landlock-helper` (C binary) is required for Landlock sandbox on Linux
+- Build integration:
+  - `scripts/build_package.js` detects `packages/cli/native/Makefile` on Linux
+  - Runs `make` to compile the binary
+  - Copies the artifact to `packages/cli/dist/landlock-helper` so it's included
+    in the package
+- Cleanup integration:
+  - `scripts/clean.js` explicitly removes `packages/cli/native/landlock-helper`
+  - Also cleans `packages/cli/dist` via standard cleanup
+- `.gitignore` includes `packages/cli/native/landlock-helper` to prevent
+  checking in binaries

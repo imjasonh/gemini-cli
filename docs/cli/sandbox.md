@@ -77,6 +77,45 @@ isolation.
   unavailable)
 - Slightly higher startup time and memory usage than Seatbelt
 
+### 4. Bubblewrap (Linux only)
+
+Lightweight namespace-based sandboxing using `bwrap`.
+
+**Requirements**: Linux with user namespace support, `bwrap` binary installed.
+
+**Enable**:
+
+- `gemini --sandbox=bwrap`
+- `GEMINI_SANDBOX=bwrap`
+- `{"tools": {"sandbox": "bwrap"}}`
+
+**Benefits**:
+
+- No container runtime required
+- Fast startup (no image pull needed)
+- Low resource overhead
+- Uses Seccomp filtering for defense-in-depth
+
+### 5. Landlock (Linux, Recommended)
+
+Modern kernel-based sandboxing using Landlock (filesystem) and Seccomp
+(syscalls).
+
+**Requirements**: Linux kernel 5.13 or later.
+
+**Enable**:
+
+- `gemini --sandbox=landlock`
+- `GEMINI_SANDBOX=landlock`
+- `{"tools": {"sandbox": "landlock"}}` (or just `true` for auto-detection)
+
+**Benefits**:
+
+- Built into the kernel (no external dependencies)
+- Strong filesystem isolation without namespaces
+- Defense-in-depth with Seccomp syscall filtering
+- Recommended for modern Linux systems
+
 ## Quickstart
 
 ```bash
@@ -116,7 +155,7 @@ gemini -p "run the test suite"
 
 1. **Command flag**: `-s` or `--sandbox`
 2. **Environment variable**:
-   `GEMINI_SANDBOX=true|docker|podman|sandbox-exec|macos-container`
+   `GEMINI_SANDBOX=true|docker|podman|sandbox-exec|macos-container|bwrap|landlock`
 3. **Settings file**: `"sandbox": true` in the `tools` object of your
    `settings.json` file (e.g., `{"tools": {"sandbox": true}}`).
 
@@ -130,6 +169,16 @@ Built-in profiles (set via `SEATBELT_PROFILE` env var):
 - `restrictive-proxied`: Strict restrictions, network via proxy
 - `strict-open`: Read and write restrictions, network allowed
 - `strict-proxied`: Read and write restrictions, network via proxy
+
+### Linux profiles (Bubblewrap / Landlock)
+
+Built-in profiles (set via `BWRAP_PROFILE` or `LANDLOCK_PROFILE` env vars):
+
+- `permissive` (default): Write to project/tmp, read-only system, network
+  allowed
+- `permissive-proxied`: Same as permissive, network via proxy
+- `restrictive`: Write to project/tmp only, `~/.gemini` read-only
+- `strict`: Write to project only, minimal system access
 
 ### Custom sandbox flags
 

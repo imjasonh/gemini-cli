@@ -504,9 +504,9 @@ Lightweight namespace-based sandboxing using bwrap.
 - [x] Profile definitions (permissive, restrictive, strict variants)
 - [x] Proxy support for bwrap
 - [x] Linux capability detection utilities
-- [ ] Updated documentation
+- [x] Updated documentation
 - [x] Unit tests with mocked bwrap binary
-- [ ] Integration tests on Linux CI
+- [x] Integration tests on Linux CI
 
 ### Estimated Effort
 

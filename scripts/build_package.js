@@ -20,6 +20,7 @@
 import { execSync } from 'node:child_process';
 import { writeFileSync, existsSync, cpSync } from 'node:fs';
 import { join, basename } from 'node:path';
+import os from 'node:os';
 
 if (!process.cwd().includes('packages')) {
   console.error('must be invoked from a package directory');
@@ -33,6 +34,20 @@ execSync('tsc --build', { stdio: 'inherit' });
 
 // copy .{md,json} files
 execSync('node ../../scripts/copy_files.js', { stdio: 'inherit' });
+
+// Build native components if present (e.g. landlock-helper on Linux)
+const nativeDir = join(process.cwd(), 'native');
+if (os.platform() === 'linux' && existsSync(join(nativeDir, 'Makefile'))) {
+  console.log('Building native components...');
+  execSync('make', { stdio: 'inherit', cwd: nativeDir });
+  // Copy artifact to dist so it's included in the package
+  if (existsSync(join(nativeDir, 'landlock-helper'))) {
+    cpSync(
+      join(nativeDir, 'landlock-helper'),
+      join(process.cwd(), 'dist', 'landlock-helper'),
+    );
+  }
+}
 
 // Copy documentation for the core package
 if (packageName === 'core') {

@@ -24,15 +24,16 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, '..');
 
-// remove npm install/build artifacts
-rmSync(join(root, 'node_modules'), { recursive: true, force: true });
-rmSync(join(root, 'bundle'), { recursive: true, force: true });
-rmSync(join(root, 'packages/cli/src/generated/'), {
-  recursive: true,
-  force: true,
-});
 const RMRF_OPTIONS = { recursive: true, force: true };
+
+// remove npm install/build artifacts
+rmSync(join(root, 'node_modules'), RMRF_OPTIONS);
 rmSync(join(root, 'bundle'), RMRF_OPTIONS);
+rmSync(join(root, 'packages/cli/src/generated/'), RMRF_OPTIONS);
+
+// Clean native artifacts
+rmSync(join(root, 'packages/cli/native/landlock-helper'), { force: true });
+
 // Dynamically clean dist directories in all workspaces
 const rootPackageJson = JSON.parse(
   readFileSync(join(root, 'package.json'), 'utf-8'),
@@ -57,10 +58,7 @@ for (const workspace of rootPackageJson.workspaces) {
 }
 
 // Clean up vscode-ide-companion package
-rmSync(join(root, 'packages/vscode-ide-companion/node_modules'), {
-  recursive: true,
-  force: true,
-});
+rmSync(join(root, 'packages/vscode-ide-companion/node_modules'), RMRF_OPTIONS);
 
 const vscodeCompanionDir = join(root, 'packages/vscode-ide-companion');
 try {
