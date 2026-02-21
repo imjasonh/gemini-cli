@@ -1240,8 +1240,10 @@ const SETTINGS_SCHEMA = {
         default: undefined as boolean | string | undefined,
         ref: 'BooleanOrString',
         description: oneLine`
-          Sandbox execution environment.
-          Set to a boolean to enable or disable the sandbox, or provide a string path to a sandbox profile.
+          Sandbox execution environment. Set to true to auto-detect, false to disable,
+          or specify: "docker", "podman", "sandbox-exec" (macOS),
+          "bwrap" (Linux), "landlock" (Linux, recommended), or
+          "macos-container" (macOS 15+).
         `,
         showInDialog: false,
       },

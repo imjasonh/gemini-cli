@@ -14,6 +14,11 @@ import * as os from 'node:os';
 import type { Settings } from './settings.js';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import {
+  isBwrapAvailable,
+  isLandlockAvailable,
+  isMacOSContainerAvailable,
+} from '../utils/sandboxUtils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -27,15 +32,18 @@ const VALID_SANDBOX_COMMANDS: ReadonlyArray<SandboxConfig['command']> = [
   'docker',
   'podman',
   'sandbox-exec',
+  'bwrap',
+  'macos-container',
+  'landlock',
 ];
 
 function isSandboxCommand(value: string): value is SandboxConfig['command'] {
   return (VALID_SANDBOX_COMMANDS as readonly string[]).includes(value);
 }
 
-function getSandboxCommand(
+async function getSandboxCommand(
   sandbox?: boolean | string | null,
-): SandboxConfig['command'] | '' {
+): Promise<SandboxConfig['command'] | ''> {
   // If the SANDBOX env var is set, we're already inside the sandbox.
   if (process.env['SANDBOX']) {
     return '';
@@ -63,7 +71,38 @@ function getSandboxCommand(
         )}`,
       );
     }
-    // confirm that specified command exists
+
+    // For landlock, check kernel support rather than a binary
+    if (sandbox === 'landlock') {
+      if (await isLandlockAvailable()) {
+        return 'landlock';
+      }
+      throw new FatalSandboxError(
+        `Sandbox command 'landlock' is not available: requires Linux kernel 5.13+ with Landlock support`,
+      );
+    }
+
+    // For macos-container, check macOS version and 'container' CLI
+    if (sandbox === 'macos-container') {
+      if (await isMacOSContainerAvailable()) {
+        return 'macos-container';
+      }
+      throw new FatalSandboxError(
+        `Sandbox command 'macos-container' is not available: requires macOS 15+ and the 'container' CLI`,
+      );
+    }
+
+    // For bwrap, check binary and user namespace support
+    if (sandbox === 'bwrap') {
+      if (await isBwrapAvailable()) {
+        return 'bwrap';
+      }
+      throw new FatalSandboxError(
+        `Sandbox command 'bwrap' is not available: install bubblewrap and ensure user namespaces are enabled`,
+      );
+    }
+
+    // confirm that specified command exists (for docker, podman, sandbox-exec)
     if (commandExists.sync(sandbox)) {
       return sandbox;
     }
@@ -72,11 +111,23 @@ function getSandboxCommand(
     );
   }
 
-  // look for seatbelt, docker, or podman, in that order
-  // for container-based sandboxing, require sandbox to be enabled explicitly
+  // Auto-detection: look for the best available sandbox for the current platform.
+  // On macOS, prefer sandbox-exec (Seatbelt). Container-based options require explicit opt-in.
   if (os.platform() === 'darwin' && commandExists.sync('sandbox-exec')) {
     return 'sandbox-exec';
-  } else if (commandExists.sync('docker') && sandbox === true) {
+  }
+
+  // On Linux with sandbox: true, prefer landlock > bwrap > docker > podman
+  if (os.platform() === 'linux' && sandbox === true) {
+    if (await isLandlockAvailable()) {
+      return 'landlock';
+    }
+    if (await isBwrapAvailable()) {
+      return 'bwrap';
+    }
+  }
+
+  if (commandExists.sync('docker') && sandbox === true) {
     return 'docker';
   } else if (commandExists.sync('podman') && sandbox === true) {
     return 'podman';
@@ -86,7 +137,7 @@ function getSandboxCommand(
   if (sandbox === true) {
     throw new FatalSandboxError(
       'GEMINI_SANDBOX is true but failed to determine command for sandbox; ' +
-        'install docker or podman or specify command in GEMINI_SANDBOX',
+        'install bubblewrap (bwrap), docker, or podman, or specify a command in GEMINI_SANDBOX',
     );
   }
 
@@ -98,7 +149,7 @@ export async function loadSandboxConfig(
   argv: SandboxCliArgs,
 ): Promise<SandboxConfig | undefined> {
   const sandboxOption = argv.sandbox ?? settings.tools?.sandbox;
-  const command = getSandboxCommand(sandboxOption);
+  const command = await getSandboxCommand(sandboxOption);
 
   const packageJson = await getPackageJson(__dirname);
   const image =

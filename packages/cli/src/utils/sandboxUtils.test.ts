@@ -7,18 +7,30 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import os from 'node:os';
 import fs from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readFile, access } from 'node:fs/promises';
+import commandExists from 'command-exists';
 import {
   getContainerPath,
   parseImageName,
   ports,
   entrypoint,
   shouldUseCurrentUserInSandbox,
+  isMacOSContainerAvailable,
+  isBwrapAvailable,
+  isLandlockAvailable,
 } from './sandboxUtils.js';
 
 vi.mock('node:os');
 vi.mock('node:fs');
 vi.mock('node:fs/promises');
+vi.mock('node:child_process');
+vi.mock('command-exists', () => {
+  const sync = vi.fn();
+  return {
+    sync,
+    default: { sync },
+  };
+});
 vi.mock('@google/gemini-cli-core', () => ({
   debugLogger: {
     log: vi.fn(),
@@ -26,6 +38,18 @@ vi.mock('@google/gemini-cli-core', () => ({
   },
   GEMINI_DIR: '.gemini',
 }));
+
+// Mock execFile used by isMacOSContainerAvailable via promisify
+vi.mock('node:child_process', () => ({
+  execFile: vi.fn(),
+}));
+
+import { execFile } from 'node:child_process';
+
+const mockedExecFile = vi.mocked(execFile);
+const mockedCommandExistsSync = vi.mocked(commandExists.sync);
+const mockedReadFile = vi.mocked(readFile);
+const mockedAccess = vi.mocked(access);
 
 describe('sandboxUtils', () => {
   const originalEnv = process.env;
@@ -139,7 +163,7 @@ describe('sandboxUtils', () => {
     it('should return true on Debian Linux', async () => {
       delete process.env['SANDBOX_SET_UID_GID'];
       vi.mocked(os.platform).mockReturnValue('linux');
-      vi.mocked(readFile).mockResolvedValue('ID=debian\n');
+      mockedReadFile.mockResolvedValue('ID=debian\n');
       expect(await shouldUseCurrentUserInSandbox()).toBe(true);
     });
 
@@ -147,6 +171,137 @@ describe('sandboxUtils', () => {
       delete process.env['SANDBOX_SET_UID_GID'];
       vi.mocked(os.platform).mockReturnValue('darwin');
       expect(await shouldUseCurrentUserInSandbox()).toBe(false);
+    });
+  });
+
+  describe('isMacOSContainerAvailable', () => {
+    beforeEach(() => {
+      vi.mocked(os.platform).mockReturnValue('darwin');
+      // Default: sw_vers returns macOS 15
+      mockedExecFile.mockImplementation((_cmd, _args, callback) => {
+        (
+          callback as (
+            err: Error | null,
+            result: { stdout: string; stderr: string },
+          ) => void
+        )(null, { stdout: '15.0\n', stderr: '' });
+        return {} as ReturnType<typeof execFile>;
+      });
+      mockedCommandExistsSync.mockReturnValue(true);
+    });
+
+    it('should return false on non-macOS', async () => {
+      vi.mocked(os.platform).mockReturnValue('linux');
+      expect(await isMacOSContainerAvailable()).toBe(false);
+    });
+
+    it('should return true on macOS 15 with container CLI', async () => {
+      expect(await isMacOSContainerAvailable()).toBe(true);
+    });
+
+    it('should return false on macOS 14', async () => {
+      mockedExecFile.mockImplementation((_cmd, _args, callback) => {
+        (
+          callback as (
+            err: Error | null,
+            result: { stdout: string; stderr: string },
+          ) => void
+        )(null, { stdout: '14.5\n', stderr: '' });
+        return {} as ReturnType<typeof execFile>;
+      });
+      expect(await isMacOSContainerAvailable()).toBe(false);
+    });
+
+    it('should return false when container CLI is not found', async () => {
+      mockedCommandExistsSync.mockReturnValue(false);
+      expect(await isMacOSContainerAvailable()).toBe(false);
+    });
+
+    it('should return false when sw_vers fails', async () => {
+      mockedExecFile.mockImplementation((_cmd, _args, callback) => {
+        (callback as (err: Error | null, result: null, stderr: null) => void)(
+          new Error('command not found'),
+          null,
+          null,
+        );
+        return {} as ReturnType<typeof execFile>;
+      });
+      expect(await isMacOSContainerAvailable()).toBe(false);
+    });
+  });
+
+  describe('isBwrapAvailable', () => {
+    beforeEach(() => {
+      vi.mocked(os.platform).mockReturnValue('linux');
+      mockedCommandExistsSync.mockReturnValue(true);
+      // Default: user namespaces enabled (file does not exist / resolves to non-zero)
+      mockedReadFile.mockRejectedValue(new Error('ENOENT'));
+    });
+
+    it('should return false on non-Linux', async () => {
+      vi.mocked(os.platform).mockReturnValue('darwin');
+      expect(await isBwrapAvailable()).toBe(false);
+    });
+
+    it('should return true when bwrap exists and user namespaces are enabled', async () => {
+      expect(await isBwrapAvailable()).toBe(true);
+    });
+
+    it('should return false when bwrap binary is not found', async () => {
+      mockedCommandExistsSync.mockReturnValue(false);
+      expect(await isBwrapAvailable()).toBe(false);
+    });
+
+    it('should return false when unprivileged_userns_clone is 0', async () => {
+      mockedReadFile.mockResolvedValue('0\n');
+      expect(await isBwrapAvailable()).toBe(false);
+    });
+
+    it('should return true when unprivileged_userns_clone is 1', async () => {
+      mockedReadFile.mockResolvedValue('1\n');
+      expect(await isBwrapAvailable()).toBe(true);
+    });
+
+    it('should return true when /proc/sys/kernel/unprivileged_userns_clone does not exist', async () => {
+      mockedReadFile.mockRejectedValue({ code: 'ENOENT' });
+      expect(await isBwrapAvailable()).toBe(true);
+    });
+  });
+
+  describe('isLandlockAvailable', () => {
+    beforeEach(() => {
+      vi.mocked(os.platform).mockReturnValue('linux');
+      vi.mocked(os.release).mockReturnValue('6.1.0-21-amd64');
+      mockedAccess.mockResolvedValue(undefined);
+    });
+
+    it('should return false on non-Linux', async () => {
+      vi.mocked(os.platform).mockReturnValue('darwin');
+      expect(await isLandlockAvailable()).toBe(false);
+    });
+
+    it('should return true on Linux 6.1 with Landlock LSM', async () => {
+      expect(await isLandlockAvailable()).toBe(true);
+    });
+
+    it('should return true on Linux 5.13 (minimum supported)', async () => {
+      vi.mocked(os.release).mockReturnValue('5.13.0-1-generic');
+      expect(await isLandlockAvailable()).toBe(true);
+    });
+
+    it('should return false on Linux 5.12 (too old)', async () => {
+      vi.mocked(os.release).mockReturnValue('5.12.0-1-generic');
+      expect(await isLandlockAvailable()).toBe(false);
+    });
+
+    it('should return false on Linux 4.x', async () => {
+      vi.mocked(os.release).mockReturnValue('4.19.0-1-amd64');
+      expect(await isLandlockAvailable()).toBe(false);
+    });
+
+    it('should return false when /sys/kernel/security/landlock is not accessible', async () => {
+      mockedAccess.mockRejectedValue(new Error('ENOENT'));
+      expect(await isLandlockAvailable()).toBe(false);
     });
   });
 });

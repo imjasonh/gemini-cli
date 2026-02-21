@@ -40,12 +40,28 @@ vi.mock('node:os', async (importOriginal) => {
   return {
     ...(actual as object),
     platform: vi.fn(),
+    release: vi.fn().mockReturnValue('6.1.0-21-amd64'),
   };
 });
+
+vi.mock('../utils/sandboxUtils.js', () => ({
+  isBwrapAvailable: vi.fn().mockResolvedValue(false),
+  isLandlockAvailable: vi.fn().mockResolvedValue(false),
+  isMacOSContainerAvailable: vi.fn().mockResolvedValue(false),
+}));
+
+import {
+  isBwrapAvailable,
+  isLandlockAvailable,
+  isMacOSContainerAvailable,
+} from '../utils/sandboxUtils.js';
 
 const mockedGetPackageJson = vi.mocked(getPackageJson);
 const mockedCommandExistsSync = vi.mocked(commandExists.sync);
 const mockedOsPlatform = vi.mocked(os.platform);
+const mockedIsBwrapAvailable = vi.mocked(isBwrapAvailable);
+const mockedIsLandlockAvailable = vi.mocked(isLandlockAvailable);
+const mockedIsMacOSContainerAvailable = vi.mocked(isMacOSContainerAvailable);
 
 describe('loadSandboxConfig', () => {
   const originalEnv = { ...process.env };
@@ -58,6 +74,9 @@ describe('loadSandboxConfig', () => {
     mockedGetPackageJson.mockResolvedValue({
       config: { sandboxImageUri: 'default/image' },
     });
+    mockedIsBwrapAvailable.mockResolvedValue(false);
+    mockedIsLandlockAvailable.mockResolvedValue(false);
+    mockedIsMacOSContainerAvailable.mockResolvedValue(false);
   });
 
   afterEach(() => {
@@ -97,7 +116,7 @@ describe('loadSandboxConfig', () => {
     it('should throw if GEMINI_SANDBOX is an invalid command', async () => {
       process.env['GEMINI_SANDBOX'] = 'invalid-command';
       await expect(loadSandboxConfig({}, {})).rejects.toThrow(
-        "Invalid sandbox command 'invalid-command'. Must be one of docker, podman, sandbox-exec",
+        "Invalid sandbox command 'invalid-command'. Must be one of docker, podman, sandbox-exec, bwrap, macos-container, landlock",
       );
     });
 
@@ -106,6 +125,54 @@ describe('loadSandboxConfig', () => {
       mockedCommandExistsSync.mockReturnValue(false);
       await expect(loadSandboxConfig({}, {})).rejects.toThrow(
         "Missing sandbox command 'docker' (from GEMINI_SANDBOX)",
+      );
+    });
+
+    it('should use bwrap if GEMINI_SANDBOX=bwrap and it is available', async () => {
+      process.env['GEMINI_SANDBOX'] = 'bwrap';
+      mockedIsBwrapAvailable.mockResolvedValue(true);
+      const config = await loadSandboxConfig({}, {});
+      expect(config).toEqual({ command: 'bwrap', image: 'default/image' });
+    });
+
+    it('should throw if GEMINI_SANDBOX=bwrap but bwrap is not available', async () => {
+      process.env['GEMINI_SANDBOX'] = 'bwrap';
+      mockedIsBwrapAvailable.mockResolvedValue(false);
+      await expect(loadSandboxConfig({}, {})).rejects.toThrow(
+        `Sandbox command 'bwrap' is not available: install bubblewrap and ensure user namespaces are enabled`,
+      );
+    });
+
+    it('should use landlock if GEMINI_SANDBOX=landlock and it is available', async () => {
+      process.env['GEMINI_SANDBOX'] = 'landlock';
+      mockedIsLandlockAvailable.mockResolvedValue(true);
+      const config = await loadSandboxConfig({}, {});
+      expect(config).toEqual({ command: 'landlock', image: 'default/image' });
+    });
+
+    it('should throw if GEMINI_SANDBOX=landlock but landlock is not available', async () => {
+      process.env['GEMINI_SANDBOX'] = 'landlock';
+      mockedIsLandlockAvailable.mockResolvedValue(false);
+      await expect(loadSandboxConfig({}, {})).rejects.toThrow(
+        `Sandbox command 'landlock' is not available: requires Linux kernel 5.13+ with Landlock support`,
+      );
+    });
+
+    it('should use macos-container if GEMINI_SANDBOX=macos-container and it is available', async () => {
+      process.env['GEMINI_SANDBOX'] = 'macos-container';
+      mockedIsMacOSContainerAvailable.mockResolvedValue(true);
+      const config = await loadSandboxConfig({}, {});
+      expect(config).toEqual({
+        command: 'macos-container',
+        image: 'default/image',
+      });
+    });
+
+    it('should throw if GEMINI_SANDBOX=macos-container but it is not available', async () => {
+      process.env['GEMINI_SANDBOX'] = 'macos-container';
+      mockedIsMacOSContainerAvailable.mockResolvedValue(false);
+      await expect(loadSandboxConfig({}, {})).rejects.toThrow(
+        `Sandbox command 'macos-container' is not available: requires macOS 15+ and the 'container' CLI`,
       );
     });
   });
@@ -133,15 +200,37 @@ describe('loadSandboxConfig', () => {
       });
     });
 
-    it('should use docker if available and sandbox is true', async () => {
+    it('should prefer landlock over bwrap and docker on linux', async () => {
       mockedOsPlatform.mockReturnValue('linux');
+      mockedIsLandlockAvailable.mockResolvedValue(true);
+      mockedIsBwrapAvailable.mockResolvedValue(true);
+      mockedCommandExistsSync.mockImplementation((cmd) => cmd === 'docker');
+      const config = await loadSandboxConfig({}, { sandbox: true });
+      expect(config).toEqual({ command: 'landlock', image: 'default/image' });
+    });
+
+    it('should prefer bwrap over docker on linux when landlock is unavailable', async () => {
+      mockedOsPlatform.mockReturnValue('linux');
+      mockedIsLandlockAvailable.mockResolvedValue(false);
+      mockedIsBwrapAvailable.mockResolvedValue(true);
+      mockedCommandExistsSync.mockImplementation((cmd) => cmd === 'docker');
+      const config = await loadSandboxConfig({}, { sandbox: true });
+      expect(config).toEqual({ command: 'bwrap', image: 'default/image' });
+    });
+
+    it('should use docker if available and sandbox is true (landlock and bwrap unavailable)', async () => {
+      mockedOsPlatform.mockReturnValue('linux');
+      mockedIsLandlockAvailable.mockResolvedValue(false);
+      mockedIsBwrapAvailable.mockResolvedValue(false);
       mockedCommandExistsSync.mockImplementation((cmd) => cmd === 'docker');
       const config = await loadSandboxConfig({ tools: { sandbox: true } }, {});
       expect(config).toEqual({ command: 'docker', image: 'default/image' });
     });
 
-    it('should use podman if available and docker is not', async () => {
+    it('should use podman if available and docker is not (landlock and bwrap unavailable)', async () => {
       mockedOsPlatform.mockReturnValue('linux');
+      mockedIsLandlockAvailable.mockResolvedValue(false);
+      mockedIsBwrapAvailable.mockResolvedValue(false);
       mockedCommandExistsSync.mockImplementation((cmd) => cmd === 'podman');
       const config = await loadSandboxConfig({}, { sandbox: true });
       expect(config).toEqual({ command: 'podman', image: 'default/image' });
@@ -149,10 +238,12 @@ describe('loadSandboxConfig', () => {
 
     it('should throw if sandbox: true but no command is found', async () => {
       mockedOsPlatform.mockReturnValue('linux');
+      mockedIsLandlockAvailable.mockResolvedValue(false);
+      mockedIsBwrapAvailable.mockResolvedValue(false);
       mockedCommandExistsSync.mockReturnValue(false);
       await expect(loadSandboxConfig({}, { sandbox: true })).rejects.toThrow(
         'GEMINI_SANDBOX is true but failed to determine command for sandbox; ' +
-          'install docker or podman or specify command in GEMINI_SANDBOX',
+          'install bubblewrap (bwrap), docker, or podman, or specify a command in GEMINI_SANDBOX',
       );
     });
   });
@@ -178,8 +269,32 @@ describe('loadSandboxConfig', () => {
       await expect(
         loadSandboxConfig({}, { sandbox: 'invalid-command' }),
       ).rejects.toThrow(
-        "Invalid sandbox command 'invalid-command'. Must be one of docker, podman, sandbox-exec",
+        "Invalid sandbox command 'invalid-command'. Must be one of docker, podman, sandbox-exec, bwrap, macos-container, landlock",
       );
+    });
+
+    it('should use bwrap when specified and available', async () => {
+      mockedIsBwrapAvailable.mockResolvedValue(true);
+      const config = await loadSandboxConfig({}, { sandbox: 'bwrap' });
+      expect(config).toEqual({ command: 'bwrap', image: 'default/image' });
+    });
+
+    it('should use landlock when specified and available', async () => {
+      mockedIsLandlockAvailable.mockResolvedValue(true);
+      const config = await loadSandboxConfig({}, { sandbox: 'landlock' });
+      expect(config).toEqual({ command: 'landlock', image: 'default/image' });
+    });
+
+    it('should use macos-container when specified and available', async () => {
+      mockedIsMacOSContainerAvailable.mockResolvedValue(true);
+      const config = await loadSandboxConfig(
+        {},
+        { sandbox: 'macos-container' },
+      );
+      expect(config).toEqual({
+        command: 'macos-container',
+        image: 'default/image',
+      });
     });
   });
 
@@ -211,6 +326,8 @@ describe('loadSandboxConfig', () => {
   describe('truthy/falsy sandbox values', () => {
     beforeEach(() => {
       mockedOsPlatform.mockReturnValue('linux');
+      mockedIsLandlockAvailable.mockResolvedValue(false);
+      mockedIsBwrapAvailable.mockResolvedValue(false);
       mockedCommandExistsSync.mockImplementation((cmd) => cmd === 'docker');
     });
 
@@ -225,7 +342,7 @@ describe('loadSandboxConfig', () => {
     it.each([false, 'false', '0', undefined, null, ''])(
       'should disable sandbox for value: %s',
       async (value) => {
-        // \`null\` is not a valid type for the arg, but good to test falsiness
+        // `null` is not a valid type for the arg, but good to test falsiness
         const config = await loadSandboxConfig({}, { sandbox: value });
         expect(config).toBeUndefined();
       },
