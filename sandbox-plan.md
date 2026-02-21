@@ -626,9 +626,9 @@ Extend existing test files:
 | `podman`          | `ubuntu-latest` | Need to install podman      |
 | `bwrap`           | `ubuntu-latest` | Need to install bubblewrap  |
 
-**Note**: As of 2024, GitHub Actions `macos-15` runners may not be generally
-available. The workflow should gracefully skip `macos-container` tests if the
-runner doesn't support it.
+**Note**: GitHub Actions `macos-15` runners are available (Apple Silicon). We
+use these runners for `macos-container` tests. The workflow installs the
+`container` CLI and initializes the system service before running tests.
 
 ### Deliverables
 
