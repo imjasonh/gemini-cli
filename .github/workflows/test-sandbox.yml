@@ -21,23 +21,18 @@ jobs:
   test-sandbox:
     name: 'Sandbox (${{ matrix.sandbox }})'
     runs-on: '${{ matrix.os }}'
-    continue-on-error: ${{ matrix.allow_failure }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - sandbox: 'bwrap'
             os: 'ubuntu-latest'
-            allow_failure: false
           - sandbox: 'landlock'
             os: 'ubuntu-latest'
-            allow_failure: false
           - sandbox: 'sandbox-exec'
             os: 'macos-latest'
-            allow_failure: true
           - sandbox: 'macos-container'
             os: 'macos-15'
-            allow_failure: true
 
     steps:
       - name: 'Checkout'
