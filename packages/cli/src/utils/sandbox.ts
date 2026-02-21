@@ -904,7 +904,7 @@ async function ensureSandboxImageIsPresent(
 
 async function ensureMacOSContainerSystemReady(): Promise<void> {
   try {
-    await execAsync('container system info', { timeout: 10000 });
+    await execAsync('container system status', { timeout: 10000 });
   } catch {
     throw new FatalSandboxError(
       'macOS Container system is not running.\n' +
@@ -1476,6 +1476,21 @@ async function startBwrapSandbox(
     args.push('--bind', bind, bind);
   }
 
+  // Ensure the CLI entry script directory is accessible inside the sandbox.
+  // When run from a project checkout (e.g. /home/runner/work/gemini-cli/bundle/)
+  // this path isn't covered by system dirs or the workdir.
+  if (cliArgs.length >= 2) {
+    const scriptDir = path.dirname(path.resolve(cliArgs[1]));
+    const allBinds = [...profile.roBinds, ...profile.rwBinds];
+    if (
+      !allBinds.some((b) => scriptDir === b || scriptDir.startsWith(b + '/'))
+    ) {
+      if (fs.existsSync(scriptDir)) {
+        args.push('--ro-bind', scriptDir, scriptDir);
+      }
+    }
+  }
+
   // Working directory
   args.push('--chdir', workdir);
 
@@ -1696,6 +1711,23 @@ async function startLandlockSandbox(
   for (const p of profile.rxPaths) {
     if (fs.existsSync(p)) {
       args.push('--rx', p);
+    }
+  }
+
+  // Ensure the CLI entry script directory is accessible inside the sandbox.
+  if (cliArgs.length >= 2) {
+    const scriptDir = path.dirname(path.resolve(cliArgs[1]));
+    const allPaths = [
+      ...profile.rxPaths,
+      ...profile.rwPaths,
+      ...profile.roPaths,
+    ];
+    if (
+      !allPaths.some((p) => scriptDir === p || scriptDir.startsWith(p + '/'))
+    ) {
+      if (fs.existsSync(scriptDir)) {
+        args.push('--rx', scriptDir);
+      }
     }
   }
 

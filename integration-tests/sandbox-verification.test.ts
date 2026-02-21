@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, it, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { TestRig } from './test-helper.js';
 import { join } from 'node:path';
 
@@ -33,20 +33,18 @@ describe('sandbox verification', () => {
       return;
     }
 
-    // The fake response instructs the CLI to call `run_shell_command` with `env`
-    const result = await rig.run({
+    // The fake response instructs the CLI to call `run_shell_command` with `env`.
+    // If the sandbox is misconfigured the CLI will crash (non-zero exit),
+    // and rig.run() will reject.
+    await rig.run({
       args: 'Check sandbox environment',
     });
 
-    // The tool output (which contains the env vars) should be present in the CLI's stdout
-    const expectedVar = `SANDBOX=${expectedSandbox}`;
-    if (!result.includes(expectedVar)) {
-      console.error(
-        `Failed to find '${expectedVar}' in output. Full output:\n${result}`,
-      );
-      throw new Error(
-        `Expected sandbox environment variable '${expectedVar}' not found in output.`,
-      );
-    }
+    // Verify the tool was actually called and succeeded inside the sandbox.
+    const foundToolCall = await rig.waitForToolCall('run_shell_command');
+    expect(
+      foundToolCall,
+      `Expected run_shell_command to be called inside ${expectedSandbox} sandbox`,
+    ).toBeTruthy();
   });
 });

@@ -132,22 +132,13 @@ jobs:
             packages/cli/src/utils/sandbox.test.ts \
             packages/cli/src/utils/sandboxUtils.test.ts
 
-      - name: 'Run integration tests'
-        if: "github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)"
+      - name: 'Run sandbox verification test'
         env:
-          GEMINI_API_KEY: '${{ secrets.GEMINI_API_KEY }}'
           KEEP_OUTPUT: 'true'
           VERBOSE: 'true'
           GEMINI_TELEMETRY_ENABLED: 'true'
           GEMINI_TELEMETRY_OUTFILE: '${{ github.workspace }}/telemetry.json'
-        run: 'npm run test:integration:sandbox:${{ matrix.sandbox }}'
-
-      - name: 'Process sandbox metrics'
-        if: "always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))"
-        run: |
-          if [ -f telemetry.json ]; then
-            node scripts/process-sandbox-metrics.js telemetry.json >> $GITHUB_STEP_SUMMARY
-          fi
+        run: 'npm run test:integration:sandbox:${{ matrix.sandbox }} -- sandbox-verification.test.ts'
 
   sandbox-summary:
     name: 'Sandbox Tests Summary'

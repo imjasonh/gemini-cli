@@ -519,7 +519,7 @@ describe('sandbox', () => {
           image: 'some-image',
         };
 
-        // 1. container system info (via execAsync)
+        // 1. container system status (via execAsync)
         // Already mocked by the promisify mock returning { stdout: '', stderr: '' }
 
         // 2. container image list -q (image exists check)
