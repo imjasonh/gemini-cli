@@ -31,6 +31,27 @@ The benefits of sandboxing include:
 - **Safety**: Reduce risk when working with untrusted code or experimental
   commands.
 
+## Choosing a sandbox method
+
+| Feature           | sandbox-exec  | macos-container      | docker/podman | bwrap         | landlock      |
+| ----------------- | ------------- | -------------------- | ------------- | ------------- | ------------- |
+| Platform          | macOS         | macOS 15+            | All           | Linux         | Linux 5.13+   |
+| Isolation         | Process       | VM (separate kernel) | Container     | Namespace     | Kernel ACLs   |
+| Startup time      | Fast          | Medium               | Medium        | Fast          | Fast          |
+| Image required    | No            | Yes                  | Yes           | No            | No            |
+| Network isolation | Profile-based | Yes                  | Yes           | Profile-based | Profile-based |
+| Resource overhead | Low           | Medium               | Medium        | Low           | Low           |
+| Security level    | Medium        | High                 | Medium        | Medium-High   | Medium-High   |
+
+**Quick guide:**
+
+- **macOS**: `sandbox-exec` is the default. Use `macos-container` for stronger
+  VM-level isolation (requires Apple Silicon, macOS 15+, and the `container`
+  CLI).
+- **Linux**: `landlock` is recommended (auto-detected with `sandbox: true`). Use
+  `bwrap` on older kernels, or `docker`/`podman` for a consistent container
+  environment.
+
 ## Sandboxing methods
 
 Your ideal method of sandboxing may differ depending on your platform and your
