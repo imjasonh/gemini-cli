@@ -6,7 +6,7 @@
 
 import os from 'node:os';
 import fs from 'node:fs';
-import { readFile, access } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { quote } from 'shell-quote';
@@ -371,13 +371,22 @@ export async function isLandlockAvailable(): Promise<boolean> {
     return false;
   }
 
-  // Check that Landlock is actually available via /sys/kernel/security/landlock
-  // The presence of /sys/kernel/security/landlock indicates the LSM is loaded.
+  // Check that Landlock LSM is loaded by reading the active LSM list.
+  // We read /sys/kernel/security/lsm instead of checking for the
+  // /sys/kernel/security/landlock/ directory, because some kernels (e.g.
+  // Azure-tuned) enable Landlock syscalls without exposing the securityfs
+  // directory.
   try {
-    await access('/sys/kernel/security/landlock');
-  } catch (_err) {
+    const lsmList = await readFile('/sys/kernel/security/lsm', 'utf8');
+    if (!lsmList.split(',').some((m) => m.trim() === 'landlock')) {
+      debugLogger.log(
+        `isLandlockAvailable: 'landlock' not found in LSM list: ${lsmList.trim()}`,
+      );
+      return false;
+    }
+  } catch (err) {
     debugLogger.log(
-      `isLandlockAvailable: /sys/kernel/security/landlock not accessible, Landlock LSM may not be loaded`,
+      `isLandlockAvailable: cannot read /sys/kernel/security/lsm: ${err}`,
     );
     return false;
   }

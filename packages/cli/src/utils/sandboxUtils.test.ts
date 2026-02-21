@@ -7,7 +7,7 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import os from 'node:os';
 import fs from 'node:fs';
-import { readFile, access } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import commandExists from 'command-exists';
 import {
   detectContainerEnvironment,
@@ -52,7 +52,6 @@ import { execFile } from 'node:child_process';
 const mockedExecFile = vi.mocked(execFile);
 const mockedCommandExistsSync = vi.mocked(commandExists.sync);
 const mockedReadFile = vi.mocked(readFile);
-const mockedAccess = vi.mocked(access);
 
 describe('sandboxUtils', () => {
   const originalEnv = process.env;
@@ -448,7 +447,9 @@ describe('sandboxUtils', () => {
     beforeEach(() => {
       vi.mocked(os.platform).mockReturnValue('linux');
       vi.mocked(os.release).mockReturnValue('6.1.0-21-amd64');
-      mockedAccess.mockResolvedValue(undefined);
+      mockedReadFile.mockResolvedValue(
+        'lockdown,capability,landlock,yama,apparmor\n',
+      );
       mockedCommandExistsSync.mockReturnValue(true);
     });
 
@@ -476,8 +477,13 @@ describe('sandboxUtils', () => {
       expect(await isLandlockAvailable()).toBe(false);
     });
 
-    it('should return false when /sys/kernel/security/landlock is not accessible', async () => {
-      mockedAccess.mockRejectedValue(new Error('ENOENT'));
+    it('should return false when landlock is not in LSM list', async () => {
+      mockedReadFile.mockResolvedValue('lockdown,capability,yama,apparmor\n');
+      expect(await isLandlockAvailable()).toBe(false);
+    });
+
+    it('should return false when /sys/kernel/security/lsm is not readable', async () => {
+      mockedReadFile.mockRejectedValue(new Error('ENOENT'));
       expect(await isLandlockAvailable()).toBe(false);
     });
 

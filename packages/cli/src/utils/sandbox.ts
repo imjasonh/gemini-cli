@@ -902,13 +902,12 @@ async function ensureSandboxImageIsPresent(
 
 async function ensureMacOSContainerSystemReady(): Promise<void> {
   try {
-    // container system start is idempotent
-    await execAsync('container system start', { timeout: 30000 });
+    await execAsync('container system info', { timeout: 10000 });
   } catch {
     throw new FatalSandboxError(
-      'Failed to start macOS Container services.\n' +
+      'macOS Container system is not running.\n' +
         'Ensure the container CLI is installed: https://github.com/apple/container\n' +
-        'Try running: container system start',
+        'Start it with: container system start',
     );
   }
 }

@@ -73,12 +73,19 @@ jobs:
 
           # Diagnostics
           echo "Kernel: $(uname -r)"
-          echo "LSMs: $(cat /sys/kernel/security/lsm 2>/dev/null || echo 'NOT AVAILABLE')"
-          echo "Landlock dir: $(ls -la /sys/kernel/security/landlock/ 2>&1 || echo 'NOT FOUND')"
+          LSM_LIST=$(cat /sys/kernel/security/lsm 2>/dev/null || echo 'NOT AVAILABLE')
+          echo "LSMs: ${LSM_LIST}"
 
-          # Verify Landlock is actually available
-          if [ ! -d /sys/kernel/security/landlock ]; then
-            echo "::error::Landlock LSM is not available on this runner (kernel $(uname -r)). Check LSM boot parameters."
+          # Verify Landlock LSM is loaded
+          if ! echo "${LSM_LIST}" | grep -qw landlock; then
+            echo "::error::Landlock LSM is not available on this runner (kernel $(uname -r)). LSMs: ${LSM_LIST}"
+            exit 1
+          fi
+
+          # Smoke-test: landlock-helper should detect a positive ABI version
+          ABI=$(/usr/local/bin/landlock-helper --ro /tmp -- /bin/true 2>&1 && echo "ok" || echo "fail")
+          if [ "$ABI" = "fail" ]; then
+            echo "::error::landlock-helper smoke test failed"
             exit 1
           fi
 
@@ -97,6 +104,9 @@ jobs:
             exit 1
           fi
           container --version
+
+          # Start the container system daemon
+          container system start
 
       - name: 'Install dependencies'
         run: 'npm ci'
