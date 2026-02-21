@@ -107,6 +107,38 @@ describe('bwrap-seccomp', () => {
       // [3] syscall check: jt should reach DENY = 1 instruction ahead
       expect(buf.readUInt8(26)).toBe(1); // N-i = 1-0
     });
+
+    it('should emit ENOSYS return block when enosysNumbers provided', () => {
+      const blocked = [101]; // EPERM group
+      const enosys = [435]; // ENOSYS group (clone3)
+      const buf = buildBpfFilter(_testing.AUDIT_ARCH_X86_64, blocked, enosys);
+      // Layout: 3 header + 1 ENOSYS + 1 EPERM + ALLOW + ENOSYS ret + EPERM ret = 8
+      expect(buf.length).toBe(8 * 8);
+
+      // [1] arch check jf: skip E+P+1 = 3 instructions to ALLOW
+      expect(buf.readUInt8(11)).toBe(3);
+
+      // [3] ENOSYS check for 435: jt should reach ENOSYS return at [6]
+      const enosysCheckOff = 3 * 8;
+      expect(buf.readUInt16LE(enosysCheckOff)).toBe(_testing.BPF_JMP_JEQ_K);
+      expect(buf.readUInt32LE(enosysCheckOff + 4)).toBe(435);
+      expect(buf.readUInt8(enosysCheckOff + 2)).toBe(2); // jt = E+P-i = 2
+
+      // [4] EPERM check for 101: jt should reach EPERM return at [7]
+      const epermCheckOff = 4 * 8;
+      expect(buf.readUInt16LE(epermCheckOff)).toBe(_testing.BPF_JMP_JEQ_K);
+      expect(buf.readUInt32LE(epermCheckOff + 4)).toBe(101);
+      expect(buf.readUInt8(epermCheckOff + 2)).toBe(2); // jt = P-i+1 = 2
+
+      // [5] ALLOW, [6] ENOSYS return, [7] EPERM return
+      expect(buf.readUInt32LE(5 * 8 + 4)).toBe(_testing.SECCOMP_RET_ALLOW);
+      expect(buf.readUInt32LE(6 * 8 + 4)).toBe(
+        _testing.SECCOMP_RET_ERRNO_ENOSYS,
+      );
+      expect(buf.readUInt32LE(7 * 8 + 4)).toBe(
+        _testing.SECCOMP_RET_ERRNO_EPERM,
+      );
+    });
   });
 
   describe('generateSeccompFilter', () => {
@@ -141,9 +173,10 @@ describe('bwrap-seccomp', () => {
 
     it('should block all expected syscalls', () => {
       const filter = generateSeccompFilter()!;
-      // Total instructions: 3 (header) + N (checks) + 2 (allow/deny)
-      const N = _testing.BLOCKED_SYSCALLS.length;
-      expect(filter.length).toBe((3 + N + 2) * 8);
+      // Total: 3 header + E enosys checks + P eperm checks + ALLOW + ENOSYS ret + EPERM ret
+      const E = _testing.ENOSYS_SYSCALLS.length;
+      const P = _testing.BLOCKED_SYSCALLS.length;
+      expect(filter.length).toBe((E + P + 6) * 8);
     });
 
     it('should use x86_64 arch value on x64', () => {
@@ -193,19 +226,47 @@ describe('bwrap-seccomp', () => {
       expect(_testing.BLOCKED_SYSCALLS).toContain('chroot');
     });
 
+    it('should have clone3 in ENOSYS list and both syscall tables', () => {
+      expect(_testing.ENOSYS_SYSCALLS).toContain('clone3');
+      expect(_testing.SYSCALLS_X86_64).toHaveProperty('clone3');
+      expect(_testing.SYSCALLS_AARCH64).toHaveProperty('clone3');
+    });
+
+    it('should return ENOSYS for clone3 in the generated filter', () => {
+      const filter = generateSeccompFilterBuffer()!;
+      const E = _testing.ENOSYS_SYSCALLS.length;
+      // ENOSYS checks are at instructions [3..2+E]; verify clone3 is there
+      const clone3Nr = _testing.SYSCALLS_X86_64['clone3'];
+      const enosysNumbers: number[] = [];
+      for (let i = 0; i < E; i++) {
+        enosysNumbers.push(filter.readUInt32LE((3 + i) * 8 + 4));
+      }
+      expect(enosysNumbers).toContain(clone3Nr);
+    });
+
     it('should embed all blocked syscall numbers in the BPF filter', () => {
       const filter = generateSeccompFilterBuffer()!;
-      // Extract all syscall numbers checked in the filter.
-      // Instructions [3..N+2] are JEQ checks; the k field (offset +4) is the syscall nr.
-      const N = _testing.BLOCKED_SYSCALLS.length;
+      // Extract all syscall numbers from JEQ check instructions.
+      // ENOSYS checks at [3..2+E], EPERM checks at [3+E..2+E+P].
+      const E = _testing.ENOSYS_SYSCALLS.length;
+      const P = _testing.BLOCKED_SYSCALLS.length;
       const checkedNumbers = new Set<number>();
-      for (let i = 0; i < N; i++) {
+      for (let i = 0; i < E + P; i++) {
         const off = (3 + i) * 8;
         checkedNumbers.add(filter.readUInt32LE(off + 4));
       }
 
       // Every blocked syscall's number should appear
       for (const name of _testing.BLOCKED_SYSCALLS) {
+        const nr = _testing.SYSCALLS_X86_64[name];
+        expect(
+          checkedNumbers.has(nr),
+          `Expected syscall '${name}' (nr ${nr}) to be in the BPF filter`,
+        ).toBe(true);
+      }
+
+      // Every ENOSYS syscall's number should appear
+      for (const name of _testing.ENOSYS_SYSCALLS) {
         const nr = _testing.SYSCALLS_X86_64[name];
         expect(
           checkedNumbers.has(nr),

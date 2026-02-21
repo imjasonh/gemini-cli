@@ -2222,3 +2222,6 @@ Based on competitive analysis, consider these additions for future milestones:
 5. **Cached web/fetch results**: Reduce prompt injection risk from live content
 6. **Auto-allow mode**: Claude Code's pattern of auto-approving within
    boundaries
+7. **Network isolation for bwrap/landlock**: The permissive profiles currently
+   allow unrestricted network access. Consider adding network namespace
+   isolation (bwrap) or firewall rules to restrict outbound connections.

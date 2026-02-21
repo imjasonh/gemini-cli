@@ -309,6 +309,9 @@ gemini -s -p "run shell command: mount | grep workspace"
 - Use the most restrictive profile that allows your work.
 - Container overhead is minimal after first build.
 - GUI applications may not work in sandboxes.
+- `SANDBOX_FLAGS` and `SANDBOX_ENV` are trust-the-user escape hatches: they can
+  weaken sandbox isolation (e.g. mounting extra paths, forwarding credentials).
+  Only set them when you understand the security implications.
 
 ## Related documentation
 

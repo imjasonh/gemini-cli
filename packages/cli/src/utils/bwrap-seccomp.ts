@@ -24,6 +24,7 @@ const AUDIT_ARCH_AARCH64 = 0xc00000b7;
 // Seccomp return values
 const SECCOMP_RET_ALLOW = 0x7fff0000;
 const SECCOMP_RET_ERRNO_EPERM = 0x00050001; // SECCOMP_RET_ERRNO | EPERM
+const SECCOMP_RET_ERRNO_ENOSYS = 0x00050026; // SECCOMP_RET_ERRNO | ENOSYS
 
 // Syscall numbers for x86_64 (from arch/x86/entry/syscalls/syscall_64.tbl)
 const SYSCALLS_X86_64: Record<string, number> = {
@@ -49,6 +50,7 @@ const SYSCALLS_X86_64: Record<string, number> = {
   process_vm_writev: 311,
   finit_module: 313,
   kexec_file_load: 320,
+  clone3: 435,
 };
 
 // Syscall numbers for aarch64 (from include/uapi/asm-generic/unistd.h)
@@ -75,6 +77,7 @@ const SYSCALLS_AARCH64: Record<string, number> = {
   process_vm_writev: 271,
   finit_module: 273,
   kexec_file_load: 294,
+  clone3: 435,
 };
 
 // Syscalls blocked by the seccomp filter
@@ -118,6 +121,11 @@ const BLOCKED_SYSCALLS = [
   'adjtimex',
 ];
 
+// Syscalls blocked with ENOSYS instead of EPERM. glibc 2.34+ uses clone3
+// for thread/process creation and treats EPERM as fatal. Returning ENOSYS
+// triggers glibc's fallback to clone(), which works normally.
+const ENOSYS_SYSCALLS = ['clone3'];
+
 interface BpfInstruction {
   code: number;
   jt: number;
@@ -141,19 +149,27 @@ function getSyscallTable(): {
 /**
  * Builds a compiled BPF deny-list filter for seccomp.
  *
+ * Supports two deny groups with different return values. ENOSYS entries
+ * are checked first so glibc can fall back to older syscalls (e.g.
+ * clone3 → clone). EPERM entries are checked next.
+ *
  * Program layout:
- *   [0]       Load arch
- *   [1]       If arch != target, jump to ALLOW
- *   [2]       Load syscall number
- *   [3..N+2]  For each blocked syscall: if match, jump to DENY
- *   [N+3]     ALLOW
- *   [N+4]     DENY (return EPERM)
+ *   [0]           Load arch
+ *   [1]           If arch != target, jump to ALLOW
+ *   [2]           Load syscall number
+ *   [3..2+E]      ENOSYS checks: if match, jump to ENOSYS return
+ *   [3+E..2+E+P]  EPERM checks: if match, jump to EPERM return
+ *   [3+E+P]       ALLOW
+ *   [4+E+P]       ENOSYS return (if E > 0)
+ *   [4/5+E+P]     EPERM return
  */
 export function buildBpfFilter(
   auditArch: number,
   blockedNumbers: number[],
+  enosysNumbers: number[] = [],
 ): Buffer {
-  const N = blockedNumbers.length;
+  const E = enosysNumbers.length;
+  const P = blockedNumbers.length;
   const instructions: BpfInstruction[] = [];
 
   // Load architecture
@@ -163,19 +179,35 @@ export function buildBpfFilter(
   instructions.push({
     code: BPF_JMP_JEQ_K,
     jt: 0,
-    jf: N + 1,
+    jf: E + P + 1,
     k: auditArch,
   });
 
   // Load syscall number
   instructions.push({ code: BPF_LD_W_ABS, jt: 0, jf: 0, k: OFFSET_NR });
 
-  // Check each blocked syscall
-  for (let i = 0; i < N; i++) {
+  // ENOSYS checks (checked first)
+  for (let i = 0; i < E; i++) {
+    // Target: ENOSYS return at [3+E+P+1] from here at [3+i]
+    // jt = (3+E+P+1) - (3+i) - 1 = E+P-i
     instructions.push({
       code: BPF_JMP_JEQ_K,
-      jt: N - i, // Forward to DENY
-      jf: 0, // Fall through to next check
+      jt: E + P - i,
+      jf: 0,
+      k: enosysNumbers[i],
+    });
+  }
+
+  // EPERM checks
+  for (let i = 0; i < P; i++) {
+    // Target: EPERM return at [3+E+P+1+(E>0?1:0)] from here at [3+E+i]
+    // With ENOSYS block: jt = (3+E+P+2) - (3+E+i) - 1 = P-i+1
+    // Without: jt = (3+E+P+1) - (3+E+i) - 1 = P-i
+    const jt = E > 0 ? P - i + 1 : P - i;
+    instructions.push({
+      code: BPF_JMP_JEQ_K,
+      jt,
+      jf: 0,
       k: blockedNumbers[i],
     });
   }
@@ -183,7 +215,17 @@ export function buildBpfFilter(
   // Default: ALLOW
   instructions.push({ code: BPF_RET_K, jt: 0, jf: 0, k: SECCOMP_RET_ALLOW });
 
-  // DENY: return EPERM
+  // ENOSYS return (only emitted when there are ENOSYS entries)
+  if (E > 0) {
+    instructions.push({
+      code: BPF_RET_K,
+      jt: 0,
+      jf: 0,
+      k: SECCOMP_RET_ERRNO_ENOSYS,
+    });
+  }
+
+  // EPERM return
   instructions.push({
     code: BPF_RET_K,
     jt: 0,
@@ -219,11 +261,15 @@ export function generateSeccompFilterBuffer(): Buffer | null {
     (n): n is number => n !== undefined,
   );
 
-  if (blockedNumbers.length === 0) {
+  const enosysNumbers = ENOSYS_SYSCALLS.map((name) => table[name]).filter(
+    (n): n is number => n !== undefined,
+  );
+
+  if (blockedNumbers.length === 0 && enosysNumbers.length === 0) {
     return null;
   }
 
-  return buildBpfFilter(auditArch, blockedNumbers);
+  return buildBpfFilter(auditArch, blockedNumbers, enosysNumbers);
 }
 
 /**
@@ -311,12 +357,14 @@ export function cleanupSeccompFile(seccomp: { path: string }): void {
 // Exported for testing
 export const _testing = {
   BLOCKED_SYSCALLS,
+  ENOSYS_SYSCALLS,
   SYSCALLS_X86_64,
   SYSCALLS_AARCH64,
   AUDIT_ARCH_X86_64,
   AUDIT_ARCH_AARCH64,
   SECCOMP_RET_ALLOW,
   SECCOMP_RET_ERRNO_EPERM,
+  SECCOMP_RET_ERRNO_ENOSYS,
   BPF_LD_W_ABS,
   BPF_JMP_JEQ_K,
   BPF_RET_K,
