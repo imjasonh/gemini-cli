@@ -632,11 +632,11 @@ runner doesn't support it.
 
 ### Deliverables
 
-- [ ] New GitHub Actions workflow for sandbox testing
-- [ ] Integration test suite for sandbox modes
-- [ ] Extended unit tests for new functionality
-- [ ] CI matrix covering all sandbox × platform combinations
-- [ ] Skip logic for unavailable sandbox modes
+- [x] New GitHub Actions workflow for sandbox testing
+- [x] Integration test suite for sandbox modes
+- [x] Extended unit tests for new functionality
+- [x] CI matrix covering all sandbox × platform combinations
+- [x] Skip logic for unavailable sandbox modes
 
 ### Estimated Effort
 

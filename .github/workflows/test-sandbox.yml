@@ -1,0 +1,120 @@
+name: 'Testing: Sandbox Modes'
+
+on:
+  push:
+    branches:
+      - 'main'
+      - 'release/*'
+  pull_request:
+    branches:
+      - 'main'
+  workflow_dispatch:
+
+concurrency:
+  group: '${{ github.workflow }}-${{ github.head_ref || github.ref }}'
+  cancel-in-progress: true
+
+permissions:
+  contents: 'read'
+
+jobs:
+  sandbox-linux:
+    name: 'Sandbox (${{ matrix.sandbox }}) - Linux'
+    runs-on: 'ubuntu-latest'
+    strategy:
+      fail-fast: false
+      matrix:
+        sandbox:
+          - 'bwrap'
+          - 'landlock'
+    steps:
+      - name: 'Checkout'
+        uses: 'actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955' # ratchet:actions/checkout@v5
+
+      - name: 'Set up Node.js 20.x'
+        uses: 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020' # ratchet:actions-node@v4
+        with:
+          node-version: '20.x'
+
+      - name: 'Install bubblewrap'
+        if: "matrix.sandbox == 'bwrap'"
+        run: 'sudo apt-get install -y bubblewrap'
+
+      - name: 'Build landlock-helper'
+        if: "matrix.sandbox == 'landlock'"
+        run: |
+          cd packages/cli/native
+          make
+          sudo install -m 755 landlock-helper /usr/local/bin/landlock-helper
+
+      - name: 'Install dependencies'
+        run: 'npm ci'
+
+      - name: 'Build project'
+        run: 'npm run build'
+
+      - name: 'Run sandbox unit tests'
+        run: |
+          npx vitest run \
+            packages/cli/src/utils/sandbox.test.ts \
+            packages/cli/src/utils/sandboxUtils.test.ts \
+            packages/cli/src/utils/bwrapProfiles.test.ts \
+            packages/cli/src/utils/bwrap-seccomp.test.ts \
+            packages/cli/src/utils/landlockProfiles.test.ts
+
+      - name: 'Run integration tests'
+        if: "github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)"
+        env:
+          GEMINI_API_KEY: '${{ secrets.GEMINI_API_KEY }}'
+          KEEP_OUTPUT: 'true'
+          VERBOSE: 'true'
+        run: 'npm run test:integration:sandbox:${{ matrix.sandbox }}'
+
+  sandbox-macos:
+    name: 'Sandbox (sandbox-exec) - macOS'
+    runs-on: 'macos-latest'
+    continue-on-error: true
+    steps:
+      - name: 'Checkout'
+        uses: 'actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955' # ratchet:actions/checkout@v5
+
+      - name: 'Set up Node.js 20.x'
+        uses: 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020' # ratchet:actions-node@v4
+        with:
+          node-version: '20.x'
+
+      - name: 'Install dependencies'
+        run: 'npm ci'
+
+      - name: 'Build project'
+        run: 'npm run build'
+
+      - name: 'Run sandbox unit tests'
+        run: |
+          npx vitest run \
+            packages/cli/src/utils/sandbox.test.ts \
+            packages/cli/src/utils/sandboxUtils.test.ts
+
+      - name: 'Run integration tests'
+        if: "github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)"
+        env:
+          GEMINI_API_KEY: '${{ secrets.GEMINI_API_KEY }}'
+          KEEP_OUTPUT: 'true'
+          VERBOSE: 'true'
+        run: 'npm run test:integration:sandbox:sandbox-exec'
+
+  sandbox-summary:
+    name: 'Sandbox Tests'
+    if: 'always()'
+    needs:
+      - 'sandbox-linux'
+      - 'sandbox-macos'
+    runs-on: 'ubuntu-latest'
+    steps:
+      - name: 'Check results'
+        run: |
+          if [[ "${{ needs.sandbox-linux.result }}" != "success" ]]; then
+            echo "Linux sandbox tests failed."
+            exit 1
+          fi
+          echo "Sandbox tests passed (macOS: ${{ needs.sandbox-macos.result }})."
