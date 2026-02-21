@@ -284,8 +284,9 @@ Strict VM-level isolation using Apple's Container framework.
 - [x] Integration with existing sandbox routing
 - [x] macOS version detection utility
 - [x] Updated documentation
-- [ ] Manual testing on macOS 15+ machine
+- [x] Manual testing on macOS 15+ machine
 - [x] Unit tests with mocked `container` CLI
+- [x] Multi-arch image build (CI) + arch detection for Rosetta flags
 
 ### Estimated Effort
 
@@ -498,13 +499,13 @@ Lightweight namespace-based sandboxing using bwrap.
 
 ### Deliverables
 
-- [ ] Bwrap profile system implementation
-- [ ] `startBwrapSandbox()` implementation
-- [ ] Profile definitions (permissive, restrictive, strict variants)
-- [ ] Proxy support for bwrap
-- [ ] Linux capability detection utilities
+- [x] Bwrap profile system implementation
+- [x] `startBwrapSandbox()` implementation
+- [x] Profile definitions (permissive, restrictive, strict variants)
+- [x] Proxy support for bwrap
+- [x] Linux capability detection utilities
 - [ ] Updated documentation
-- [ ] Unit tests with mocked bwrap binary
+- [x] Unit tests with mocked bwrap binary
 - [ ] Integration tests on Linux CI
 
 ### Estimated Effort
@@ -1164,11 +1165,11 @@ When sandboxing is skipped due to nested environment:
 
 ### Deliverables
 
-- [ ] `detectContainerEnvironment()` utility function
-- [ ] Integration with sandbox config loader
-- [ ] Support for `GEMINI_SANDBOX=force` override
-- [ ] Unit tests for detection logic
-- [ ] Documentation for nested environment behavior
+- [x] `detectContainerEnvironment()` utility function
+- [x] Integration with sandbox config loader
+- [x] Support for `GEMINI_SANDBOX=force` override
+- [x] Unit tests for detection logic
+- [x] Documentation for nested environment behavior
 
 ### Estimated Effort
 
@@ -1427,10 +1428,10 @@ const buildArgs = [
 
 ### Deliverables
 
-- [ ] Multi-arch build configuration
-- [ ] Updated GitHub Actions workflow
+- [x] Multi-arch build configuration
+- [x] Updated GitHub Actions workflow
 - [ ] CI testing on both architectures
-- [ ] Documentation noting architecture support
+- [x] Documentation noting architecture support
 
 ### Estimated Effort
 

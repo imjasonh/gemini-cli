@@ -49,14 +49,31 @@
   inside the container
 - The check runs early in `getSandboxCommand()` before any command validation
 
+## Bubblewrap (bwrap) Sandbox
+
+- Uses Linux namespaces for isolation (user, mount, PID)
+- Works on host filesystem with selective bind mounts (no image needed)
+- `--ro-bind src dst` for read-only, `--bind src dst` for read-write
+- `--dev /dev`, `--proc /proc`, `--tmpfs /run` for basic system mounts
+- `--setenv NAME VALUE` for environment variables (not inherited from parent)
+- `--die-with-parent` ensures sandbox dies if parent exits
+- `--new-session` prevents tty hijacking
+- `--chdir dir` sets working directory inside sandbox
+- `--` separates bwrap args from command to run
+- Uses host-side proxy (like Seatbelt), not container-based (like Docker)
+- Profile system: permissive/restrictive/strict × open/proxied (6 profiles)
+- cliArgs (process.argv) passed directly after `--` separator
+
 ## Codebase Architecture
 
 - `sandbox.ts` `start_sandbox()` routes by `config.command`:
   - `sandbox-exec` → Seatbelt (returns from if block)
   - `macos-container` → macOS Container (returns from if block)
+  - `bwrap` → Bubblewrap (returns from if block)
   - Everything else → Docker/Podman (fallthrough)
 - `sandboxConfig.ts` handles auto-detection priority and validation
 - `sandboxUtils.ts` has availability detection functions
+- `bwrapProfiles.ts` has profile definitions and builder
 - Seatbelt uses host-side proxy; Docker uses container-based proxy; macOS
-  Container uses host-side proxy (like Seatbelt)
+  Container and Bubblewrap use host-side proxy (like Seatbelt)
 - Test pattern: mock `spawn` with `EventEmitter`, emit `close` with timeout

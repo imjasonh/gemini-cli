@@ -31,7 +31,9 @@ import {
   SANDBOX_NETWORK_NAME,
   SANDBOX_PROXY_NAME,
   BUILTIN_SEATBELT_PROFILES,
+  DEFAULT_BWRAP_PROFILE,
 } from './sandboxUtils.js';
+import { buildBwrapProfile, BUILTIN_BWRAP_PROFILES } from './bwrapProfiles.js';
 
 const execAsync = promisify(exec);
 
@@ -210,6 +212,10 @@ export async function start_sandbox(
         cliConfig,
         cliArgs,
       );
+    }
+
+    if (config.command === 'bwrap') {
+      return await startBwrapSandbox(config, nodeArgs, cliConfig, cliArgs);
     }
 
     debugLogger.log(`hopping into sandbox (command: ${config.command}) ...`);
@@ -1350,6 +1356,225 @@ async function startMacOSContainerSandbox(
       if (code !== 0 && code !== null) {
         debugLogger.log(
           `macOS Container sandbox exited with code: ${code}, signal: ${signal}`,
+        );
+      }
+      resolve(code ?? 1);
+    });
+  });
+}
+
+async function startBwrapSandbox(
+  config: SandboxConfig,
+  nodeArgs: string[],
+  cliConfig?: Config,
+  cliArgs: string[] = [],
+): Promise<number> {
+  debugLogger.log('hopping into bubblewrap sandbox...');
+
+  if (process.env['BUILD_SANDBOX']) {
+    throw new FatalSandboxError('Cannot BUILD_SANDBOX when using Bubblewrap');
+  }
+
+  const profileName = process.env['BWRAP_PROFILE'] ?? DEFAULT_BWRAP_PROFILE;
+  const workdir = path.resolve(process.cwd());
+  const home = homedir();
+  const tmp = os.tmpdir();
+
+  // Allow custom profiles from project settings
+  let profile;
+  if (BUILTIN_BWRAP_PROFILES.includes(profileName)) {
+    profile = buildBwrapProfile(profileName, workdir, home, tmp);
+  } else {
+    // Look for a custom profile file under .gemini/bwrap-profiles/
+    throw new FatalSandboxError(
+      `Unknown bwrap profile '${profileName}'. ` +
+        `Available profiles: ${BUILTIN_BWRAP_PROFILES.join(', ')}`,
+    );
+  }
+
+  debugLogger.log(`using bubblewrap (profile: ${profileName}) ...`);
+
+  const args: string[] = [
+    // Namespace isolation
+    '--unshare-user',
+    '--uid',
+    String(process.getuid?.() ?? 1000),
+    '--gid',
+    String(process.getgid?.() ?? 1000),
+    '--unshare-mount',
+    '--unshare-pid',
+    '--new-session',
+    '--die-with-parent',
+
+    // Basic system mounts
+    '--dev',
+    '/dev',
+    '--proc',
+    '/proc',
+    '--tmpfs',
+    '/run',
+  ];
+
+  // Network isolation
+  if (!profile.shareNetwork) {
+    args.push('--unshare-net');
+  }
+
+  // Read-only system binds
+  for (const bind of profile.roBinds) {
+    if (fs.existsSync(bind)) {
+      args.push('--ro-bind', bind, bind);
+    }
+  }
+
+  // Read-write binds
+  for (const bind of profile.rwBinds) {
+    if (!fs.existsSync(bind)) {
+      fs.mkdirSync(bind, { recursive: true });
+    }
+    args.push('--bind', bind, bind);
+  }
+
+  // Working directory
+  args.push('--chdir', workdir);
+
+  // Core environment variables
+  args.push('--setenv', 'SANDBOX', 'bwrap');
+  args.push('--setenv', 'HOME', home);
+
+  if (process.env['PATH']) {
+    args.push('--setenv', 'PATH', process.env['PATH']);
+  }
+
+  // Forward relevant environment variables
+  const envVarsToForward = [
+    'GEMINI_API_KEY',
+    'GOOGLE_API_KEY',
+    'GOOGLE_GEMINI_BASE_URL',
+    'GOOGLE_VERTEX_BASE_URL',
+    'GOOGLE_GENAI_USE_VERTEXAI',
+    'GOOGLE_GENAI_USE_GCA',
+    'GOOGLE_CLOUD_PROJECT',
+    'GOOGLE_CLOUD_LOCATION',
+    'GEMINI_MODEL',
+    'TERM',
+    'COLORTERM',
+    'GEMINI_CLI_IDE_SERVER_PORT',
+    'GEMINI_CLI_IDE_WORKSPACE_PATH',
+    'TERM_PROGRAM',
+    'GEMINI_CLI_TEST_VAR',
+    'GOOGLE_APPLICATION_CREDENTIALS',
+  ];
+
+  for (const envVar of envVarsToForward) {
+    if (process.env[envVar]) {
+      args.push('--setenv', envVar, process.env[envVar]);
+    }
+  }
+
+  // Custom env from SANDBOX_ENV
+  if (process.env['SANDBOX_ENV']) {
+    for (let env of process.env['SANDBOX_ENV'].split(',')) {
+      if ((env = env.trim())) {
+        if (env.includes('=')) {
+          const [key, ...valueParts] = env.split('=');
+          args.push('--setenv', key, valueParts.join('='));
+        } else {
+          throw new FatalSandboxError(
+            'SANDBOX_ENV must be a comma-separated list of key=value pairs',
+          );
+        }
+      }
+    }
+  }
+
+  // NODE_OPTIONS
+  const existingNodeOptions = process.env['NODE_OPTIONS'] || '';
+  const allNodeOptions = [
+    ...(process.env['DEBUG'] ? ['--inspect-brk'] : []),
+    ...(existingNodeOptions ? [existingNodeOptions] : []),
+    ...nodeArgs,
+  ].join(' ');
+  if (allNodeOptions.length > 0) {
+    args.push('--setenv', 'NODE_OPTIONS', allNodeOptions);
+  }
+
+  // Proxy support (host-side, like Seatbelt)
+  const proxyCommand = process.env['GEMINI_SANDBOX_PROXY_COMMAND'];
+  let proxyProcess: ChildProcess | undefined;
+
+  if (proxyCommand) {
+    const proxy =
+      process.env['HTTPS_PROXY'] ||
+      process.env['https_proxy'] ||
+      process.env['HTTP_PROXY'] ||
+      process.env['http_proxy'] ||
+      'http://localhost:8877';
+    args.push('--setenv', 'HTTPS_PROXY', proxy);
+    args.push('--setenv', 'https_proxy', proxy);
+    args.push('--setenv', 'HTTP_PROXY', proxy);
+    args.push('--setenv', 'http_proxy', proxy);
+    const noProxy = process.env['NO_PROXY'] || process.env['no_proxy'];
+    if (noProxy) {
+      args.push('--setenv', 'NO_PROXY', noProxy);
+      args.push('--setenv', 'no_proxy', noProxy);
+    }
+
+    proxyProcess = spawn(proxyCommand, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: true,
+      detached: true,
+    });
+    const stopProxy = () => {
+      debugLogger.log('stopping proxy...');
+      if (proxyProcess?.pid) {
+        process.kill(-proxyProcess.pid, 'SIGTERM');
+      }
+    };
+    process.off('exit', stopProxy);
+    process.on('exit', stopProxy);
+    process.off('SIGINT', stopProxy);
+    process.on('SIGINT', stopProxy);
+    process.off('SIGTERM', stopProxy);
+    process.on('SIGTERM', stopProxy);
+    proxyProcess.stderr?.on('data', (data) => {
+      debugLogger.debug(`[PROXY STDERR]: ${data.toString().trim()}`);
+    });
+    debugLogger.log('waiting for proxy to start...');
+    await execAsync(
+      'until timeout 0.25 curl -s http://localhost:8877; do sleep 0.25; done',
+    );
+  }
+
+  // The command to run inside bwrap
+  args.push('--', ...cliArgs);
+
+  // Spawn bwrap
+  process.stdin.pause();
+  const sandboxProcess = spawn('bwrap', args, { stdio: 'inherit' });
+
+  // Register proxy close handler after sandbox is spawned
+  if (proxyProcess) {
+    proxyProcess.on('close', (code, signal) => {
+      if (sandboxProcess.pid) {
+        process.kill(-sandboxProcess.pid, 'SIGTERM');
+      }
+      throw new FatalSandboxError(
+        `Proxy command '${proxyCommand}' exited with code ${code}, signal ${signal}`,
+      );
+    });
+  }
+
+  return new Promise((resolve, reject) => {
+    sandboxProcess.on('error', (err) => {
+      coreEvents.emitFeedback('error', 'Bubblewrap sandbox process error', err);
+      reject(err);
+    });
+    sandboxProcess.on('close', (code, signal) => {
+      process.stdin.resume();
+      if (code !== 0 && code !== null) {
+        debugLogger.log(
+          `Bubblewrap sandbox exited with code: ${code}, signal: ${signal}`,
         );
       }
       resolve(code ?? 1);

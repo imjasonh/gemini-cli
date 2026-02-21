@@ -811,5 +811,255 @@ describe('sandbox', () => {
         );
       });
     });
+
+    describe('Bubblewrap sandbox', () => {
+      it('should route bwrap to bubblewrap with namespace args', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = {
+          command: 'bwrap',
+          image: 'some-image',
+        };
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, [
+          'gemini',
+          '--prompt',
+          'hello',
+        ]);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        expect(spawn).toHaveBeenCalledWith(
+          'bwrap',
+          expect.arrayContaining([
+            '--unshare-user',
+            '--unshare-mount',
+            '--unshare-pid',
+            '--new-session',
+            '--die-with-parent',
+            '--dev',
+            '/dev',
+            '--proc',
+            '/proc',
+          ]),
+          expect.objectContaining({ stdio: 'inherit' }),
+        );
+      });
+
+      it('should set SANDBOX=bwrap env var', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = {
+          command: 'bwrap',
+          image: 'some-image',
+        };
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, ['gemini']);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        expect(spawn).toHaveBeenCalledWith(
+          'bwrap',
+          expect.arrayContaining(['--setenv', 'SANDBOX', 'bwrap']),
+          expect.any(Object),
+        );
+      });
+
+      it('should forward environment variables via --setenv', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = {
+          command: 'bwrap',
+          image: 'some-image',
+        };
+        process.env['GEMINI_API_KEY'] = 'test-key';
+        process.env['GOOGLE_GEMINI_BASE_URL'] = 'http://test.proxy';
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        expect(spawn).toHaveBeenCalledWith(
+          'bwrap',
+          expect.arrayContaining([
+            '--setenv',
+            'GEMINI_API_KEY',
+            'test-key',
+            '--setenv',
+            'GOOGLE_GEMINI_BASE_URL',
+            'http://test.proxy',
+          ]),
+          expect.any(Object),
+        );
+      });
+
+      it('should include bind mounts from permissive profile', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = {
+          command: 'bwrap',
+          image: 'some-image',
+        };
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, ['gemini']);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+
+        const bwrapArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+        // Should have --ro-bind for system dirs
+        const roBindIdx = bwrapArgs.indexOf('--ro-bind');
+        expect(roBindIdx).toBeGreaterThan(-1);
+        // Should have --bind for rw dirs (workdir)
+        const bindIdx = bwrapArgs.indexOf('--bind');
+        expect(bindIdx).toBeGreaterThan(-1);
+      });
+
+      it('should throw FatalSandboxError if BUILD_SANDBOX is set', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        process.env['BUILD_SANDBOX'] = '1';
+        const config: SandboxConfig = {
+          command: 'bwrap',
+          image: 'some-image',
+        };
+
+        await expect(start_sandbox(config)).rejects.toThrow(FatalSandboxError);
+      });
+
+      it('should pass cliArgs after -- separator', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = {
+          command: 'bwrap',
+          image: 'some-image',
+        };
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, [
+          'gemini',
+          '--prompt',
+          'test',
+        ]);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+
+        const bwrapArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+        const separatorIdx = bwrapArgs.indexOf('--');
+        expect(separatorIdx).toBeGreaterThan(-1);
+        expect(bwrapArgs.slice(separatorIdx + 1)).toEqual([
+          'gemini',
+          '--prompt',
+          'test',
+        ]);
+      });
+
+      it('should use custom profile from BWRAP_PROFILE env', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        process.env['BWRAP_PROFILE'] = 'strict';
+        const config: SandboxConfig = {
+          command: 'bwrap',
+          image: 'some-image',
+        };
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, ['gemini']);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        // strict profile should NOT have ~/.gemini in bind mounts
+        const bwrapArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+        const argsStr = bwrapArgs.join(' ');
+        expect(argsStr).not.toContain('.gemini');
+      });
+
+      it('should throw for invalid profile name', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        process.env['BWRAP_PROFILE'] = 'nonexistent';
+        const config: SandboxConfig = {
+          command: 'bwrap',
+          image: 'some-image',
+        };
+
+        await expect(start_sandbox(config)).rejects.toThrow(FatalSandboxError);
+      });
+    });
   });
 });
