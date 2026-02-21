@@ -1924,14 +1924,15 @@ Modern kernel-based sandboxing using Landlock + seccomp.
 
 ### Deliverables
 
-- [ ] `isLandlockSupported()` detection function
-- [ ] Landlock helper binary or native addon
-- [ ] `startLandlockSandbox()` implementation
-- [ ] Profile system (read-only, workspace-write, etc.)
-- [ ] Protected paths feature
-- [ ] Fallback chain implementation
-- [ ] Integration with seccomp (from Milestone 11)
-- [ ] Unit and integration tests
+- [x] `isLandlockAvailable()` detection function
+- [x] Landlock helper binary (`native/landlock-helper.c` + Makefile)
+- [x] `startLandlockSandbox()` implementation
+- [x] Profile system (permissive, restrictive, strict × open/proxied)
+- [ ] Protected paths feature (deferred: Landlock rules are additive, cannot
+      restrict subdirs below parent access)
+- [x] Fallback chain implementation (landlock > bwrap > docker > podman)
+- [x] Integration with seccomp (from Milestone 11)
+- [x] Unit and integration tests
 - [ ] Documentation
 
 ### Estimated Effort
