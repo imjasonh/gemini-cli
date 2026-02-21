@@ -33,6 +33,8 @@ jobs:
             os: 'macos-latest'
           - sandbox: 'macos-container'
             os: 'macos-15'
+          - sandbox: 'docker'
+            os: 'ubuntu-latest'
 
     steps:
       - name: 'Checkout'

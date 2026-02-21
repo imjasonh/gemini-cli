@@ -871,7 +871,7 @@ describe('sandbox', () => {
           'bwrap',
           expect.arrayContaining([
             '--unshare-user',
-            '--unshare-mount',
+
             '--unshare-pid',
             '--new-session',
             '--die-with-parent',

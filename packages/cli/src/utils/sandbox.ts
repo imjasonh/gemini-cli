@@ -1435,7 +1435,6 @@ async function startBwrapSandbox(
     String(process.getuid?.() ?? 1000),
     '--gid',
     String(process.getgid?.() ?? 1000),
-    '--unshare-mount',
     '--unshare-pid',
     '--new-session',
     '--die-with-parent',
