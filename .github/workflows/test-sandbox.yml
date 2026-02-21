@@ -105,8 +105,9 @@ jobs:
           fi
           container --version
 
-          # Start the container system daemon
-          container system start
+          # Start the container system daemon.
+          # First run prompts to download a default kernel; pipe yes to accept.
+          yes | container system start
 
       - name: 'Install dependencies'
         run: 'npm ci'
