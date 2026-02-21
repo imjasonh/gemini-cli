@@ -57,6 +57,14 @@ export function buildLandlockProfile(
   // System directories need read+execute access
   const systemRxPaths = ['/usr', '/lib', '/lib64', '/bin', '/sbin', '/etc'];
 
+  // Ensure the node binary's directory is accessible. On some systems
+  // (e.g. GitHub Actions runners) node lives outside standard paths
+  // like /opt/hostedtoolcache/.
+  const nodeDir = path.dirname(process.execPath);
+  if (!systemRxPaths.some((dir) => nodeDir.startsWith(dir))) {
+    systemRxPaths.push(nodeDir);
+  }
+
   switch (baseName) {
     case 'permissive':
       return {

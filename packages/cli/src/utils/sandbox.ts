@@ -478,12 +478,14 @@ export async function start_sandbox(
     }
     args.push('--name', containerName, '--hostname', containerName);
 
-    // copy GEMINI_CLI_TEST_VAR for integration tests
-    if (process.env['GEMINI_CLI_TEST_VAR']) {
-      args.push(
-        '--env',
-        `GEMINI_CLI_TEST_VAR=${process.env['GEMINI_CLI_TEST_VAR']}`,
-      );
+    // Forward integration test env vars into the container
+    for (const testVar of [
+      'GEMINI_CLI_TEST_VAR',
+      'GEMINI_CLI_INTEGRATION_TEST',
+    ]) {
+      if (process.env[testVar]) {
+        args.push('--env', `${testVar}=${process.env[testVar]}`);
+      }
     }
 
     // copy GEMINI_API_KEY(s)
@@ -1178,12 +1180,14 @@ async function startMacOSContainerSandbox(
   const containerName = `gemini-sandbox-${randomBytes(4).toString('hex')}`;
   args.push('--name', containerName);
 
-  // Forward environment variables
-  if (process.env['GEMINI_CLI_TEST_VAR']) {
-    args.push(
-      '-e',
-      `GEMINI_CLI_TEST_VAR=${process.env['GEMINI_CLI_TEST_VAR']}`,
-    );
+  // Forward integration test env vars
+  for (const testVar of [
+    'GEMINI_CLI_TEST_VAR',
+    'GEMINI_CLI_INTEGRATION_TEST',
+  ]) {
+    if (process.env[testVar]) {
+      args.push('-e', `${testVar}=${process.env[testVar]}`);
+    }
   }
   if (process.env['GEMINI_API_KEY']) {
     args.push('-e', `GEMINI_API_KEY=${process.env['GEMINI_API_KEY']}`);
@@ -1500,6 +1504,7 @@ async function startBwrapSandbox(
     'GEMINI_CLI_IDE_WORKSPACE_PATH',
     'TERM_PROGRAM',
     'GEMINI_CLI_TEST_VAR',
+    'GEMINI_CLI_INTEGRATION_TEST',
     'GOOGLE_APPLICATION_CREDENTIALS',
   ];
 

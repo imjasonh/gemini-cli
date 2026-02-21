@@ -56,6 +56,14 @@ export function buildBwrapProfile(
   // System directories to bind read-only (common to all profiles)
   const systemRoBinds = ['/usr', '/lib', '/lib64', '/bin', '/sbin', '/etc'];
 
+  // Ensure the node binary's directory is accessible. On some systems
+  // (e.g. GitHub Actions runners) node lives outside standard paths
+  // like /opt/hostedtoolcache/.
+  const nodeDir = path.dirname(process.execPath);
+  if (!systemRoBinds.some((dir) => nodeDir.startsWith(dir))) {
+    systemRoBinds.push(nodeDir);
+  }
+
   switch (baseName) {
     case 'permissive':
       return {
