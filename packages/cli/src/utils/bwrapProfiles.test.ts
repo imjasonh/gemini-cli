@@ -133,7 +133,7 @@ describe('bwrapProfiles', () => {
         );
         expect(profile.name).toBe('strict-proxied');
         expect(profile.rwBinds).toEqual([workdir]);
-        expect(profile.shareNetwork).toBe(true);
+        expect(profile.shareNetwork).toBe(false);
       });
     });
 
