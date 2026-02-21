@@ -9,8 +9,11 @@ import fs from 'node:fs';
 import {
   buildBpfFilter,
   generateSeccompFilter,
+  generateSeccompFilterBuffer,
   prepareSeccompFd,
+  prepareSeccompFile,
   cleanupSeccomp,
+  cleanupSeccompFile,
   _testing,
 } from './bwrap-seccomp.js';
 
@@ -229,6 +232,62 @@ describe('bwrap-seccomp', () => {
       expect(() =>
         cleanupSeccomp({ fd: 42, path: '/tmp/test.bpf' }),
       ).not.toThrow();
+    });
+  });
+
+  describe('generateSeccompFilterBuffer', () => {
+    it('should return a buffer on x64 regardless of BWRAP_SECCOMP env', () => {
+      process.env['BWRAP_SECCOMP'] = 'off';
+      const filter = generateSeccompFilterBuffer();
+      expect(filter).toBeInstanceOf(Buffer);
+      expect(filter!.length).toBeGreaterThan(0);
+    });
+
+    it('should return null for unsupported architecture', () => {
+      Object.defineProperty(process, 'arch', {
+        value: 's390x',
+        configurable: true,
+      });
+      expect(generateSeccompFilterBuffer()).toBeNull();
+    });
+  });
+
+  describe('prepareSeccompFile', () => {
+    it('should write filter to temp file and return path', () => {
+      vi.mocked(fs.writeFileSync).mockImplementation(() => {});
+
+      const result = prepareSeccompFile();
+      expect(result).not.toBeNull();
+      expect(result!.path).toMatch(/seccomp-.*\.bpf$/);
+      expect(fs.writeFileSync).toHaveBeenCalledWith(
+        result!.path,
+        expect.any(Buffer),
+      );
+    });
+
+    it('should return null for unsupported architecture', () => {
+      Object.defineProperty(process, 'arch', {
+        value: 's390x',
+        configurable: true,
+      });
+      expect(prepareSeccompFile()).toBeNull();
+    });
+  });
+
+  describe('cleanupSeccompFile', () => {
+    it('should unlink file', () => {
+      vi.mocked(fs.unlinkSync).mockImplementation(() => {});
+
+      cleanupSeccompFile({ path: '/tmp/test.bpf' });
+      expect(fs.unlinkSync).toHaveBeenCalledWith('/tmp/test.bpf');
+    });
+
+    it('should not throw if unlink fails', () => {
+      vi.mocked(fs.unlinkSync).mockImplementation(() => {
+        throw new Error('not found');
+      });
+
+      expect(() => cleanupSeccompFile({ path: '/tmp/test.bpf' })).not.toThrow();
     });
   });
 });

@@ -367,15 +367,23 @@ export async function isLandlockAvailable(): Promise<boolean> {
   }
 
   // Check that Landlock is actually available via /sys/kernel/security/landlock
-  // or by attempting a prctl(PR_SET_SECCOMP) equivalent check.
   // The presence of /sys/kernel/security/landlock indicates the LSM is loaded.
   try {
     await access('/sys/kernel/security/landlock');
-    return true;
   } catch (_err) {
     debugLogger.log(
       `isLandlockAvailable: /sys/kernel/security/landlock not accessible, Landlock LSM may not be loaded`,
     );
     return false;
   }
+
+  // Check that the landlock-helper binary is in PATH
+  if (!commandExists.sync('landlock-helper')) {
+    debugLogger.log(
+      `isLandlockAvailable: 'landlock-helper' binary not found in PATH`,
+    );
+    return false;
+  }
+
+  return true;
 }

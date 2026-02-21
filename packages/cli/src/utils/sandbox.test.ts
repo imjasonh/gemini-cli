@@ -17,6 +17,8 @@ const {
   mockedGetContainerPath,
   mockedPrepareSeccompFd,
   mockedCleanupSeccomp,
+  mockedPrepareSeccompFile,
+  mockedCleanupSeccompFile,
 } = vi.hoisted(() => ({
   mockedHomedir: vi.fn().mockReturnValue('/home/user'),
   mockedGetContainerPath: vi.fn().mockImplementation((p: string) => p),
@@ -24,6 +26,10 @@ const {
     .fn()
     .mockReturnValue({ fd: 99, path: '/tmp/bwrap-seccomp-test.bpf' }),
   mockedCleanupSeccomp: vi.fn(),
+  mockedPrepareSeccompFile: vi
+    .fn()
+    .mockReturnValue({ path: '/tmp/seccomp-test.bpf' }),
+  mockedCleanupSeccompFile: vi.fn(),
 }));
 
 vi.mock('./sandboxUtils.js', async (importOriginal) => {
@@ -37,6 +43,8 @@ vi.mock('./sandboxUtils.js', async (importOriginal) => {
 vi.mock('./bwrap-seccomp.js', () => ({
   prepareSeccompFd: mockedPrepareSeccompFd,
   cleanupSeccomp: mockedCleanupSeccomp,
+  prepareSeccompFile: mockedPrepareSeccompFile,
+  cleanupSeccompFile: mockedCleanupSeccompFile,
 }));
 
 vi.mock('node:child_process');
@@ -1176,6 +1184,275 @@ describe('sandbox', () => {
         };
 
         await expect(start_sandbox(config)).rejects.toThrow(FatalSandboxError);
+      });
+    });
+
+    describe('Landlock sandbox', () => {
+      it('should route landlock to landlock-helper with correct args', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = {
+          command: 'landlock',
+          image: 'some-image',
+        };
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, [
+          'gemini',
+          '--prompt',
+          'hello',
+        ]);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        expect(spawn).toHaveBeenCalledWith(
+          'landlock-helper',
+          expect.arrayContaining([
+            '--ro',
+            '--rw',
+            '--rx',
+            '--seccomp',
+            '/tmp/seccomp-test.bpf',
+            '--',
+            'gemini',
+            '--prompt',
+            'hello',
+          ]),
+          expect.objectContaining({
+            stdio: 'inherit',
+            env: expect.objectContaining({ SANDBOX: 'landlock' }),
+          }),
+        );
+      });
+
+      it('should include --seccomp when seccomp is enabled', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = {
+          command: 'landlock',
+          image: 'some-image',
+        };
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, ['gemini']);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        const landlockArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+        expect(landlockArgs).toContain('--seccomp');
+        expect(landlockArgs).toContain('/tmp/seccomp-test.bpf');
+      });
+
+      it('should not include --seccomp when seccomp is disabled', async () => {
+        mockedPrepareSeccompFile.mockReturnValueOnce(null);
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = {
+          command: 'landlock',
+          image: 'some-image',
+        };
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, ['gemini']);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        const landlockArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+        expect(landlockArgs).not.toContain('--seccomp');
+      });
+
+      it('should cleanup seccomp file on process close', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = {
+          command: 'landlock',
+          image: 'some-image',
+        };
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, ['gemini']);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        expect(mockedCleanupSeccompFile).toHaveBeenCalledWith({
+          path: '/tmp/seccomp-test.bpf',
+        });
+      });
+
+      it('should set SANDBOX=landlock in env', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = {
+          command: 'landlock',
+          image: 'some-image',
+        };
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, ['gemini']);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        expect(spawn).toHaveBeenCalledWith(
+          'landlock-helper',
+          expect.any(Array),
+          expect.objectContaining({
+            env: expect.objectContaining({ SANDBOX: 'landlock' }),
+          }),
+        );
+      });
+
+      it('should throw FatalSandboxError if BUILD_SANDBOX is set', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        process.env['BUILD_SANDBOX'] = '1';
+        const config: SandboxConfig = {
+          command: 'landlock',
+          image: 'some-image',
+        };
+
+        await expect(start_sandbox(config)).rejects.toThrow(FatalSandboxError);
+      });
+
+      it('should use custom profile from LANDLOCK_PROFILE env', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        process.env['LANDLOCK_PROFILE'] = 'strict';
+        const config: SandboxConfig = {
+          command: 'landlock',
+          image: 'some-image',
+        };
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, ['gemini']);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        // strict profile should NOT have ~/.gemini in args
+        const landlockArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+        const argsStr = landlockArgs.join(' ');
+        expect(argsStr).not.toContain('.gemini');
+      });
+
+      it('should throw for invalid profile name', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        process.env['LANDLOCK_PROFILE'] = 'nonexistent';
+        const config: SandboxConfig = {
+          command: 'landlock',
+          image: 'some-image',
+        };
+
+        await expect(start_sandbox(config)).rejects.toThrow(FatalSandboxError);
+      });
+
+      it('should pass cliArgs after -- separator', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = {
+          command: 'landlock',
+          image: 'some-image',
+        };
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, [
+          'gemini',
+          '--prompt',
+          'test',
+        ]);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+
+        const landlockArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+        const separatorIdx = landlockArgs.indexOf('--');
+        expect(separatorIdx).toBeGreaterThan(-1);
+        expect(landlockArgs.slice(separatorIdx + 1)).toEqual([
+          'gemini',
+          '--prompt',
+          'test',
+        ]);
       });
     });
   });

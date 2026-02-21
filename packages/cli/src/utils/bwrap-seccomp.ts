@@ -200,16 +200,10 @@ export function buildBpfFilter(
 }
 
 /**
- * Generates a compiled BPF seccomp filter that blocks dangerous syscalls.
- *
- * Returns null if seccomp is disabled via BWRAP_SECCOMP=off or the
- * host architecture is unsupported.
+ * Builds the BPF seccomp filter buffer for the current architecture.
+ * Returns null if the architecture is unsupported.
  */
-export function generateSeccompFilter(): Buffer | null {
-  if (process.env['BWRAP_SECCOMP'] === 'off') {
-    return null;
-  }
-
+export function generateSeccompFilterBuffer(): Buffer | null {
   const { table, auditArch } = getSyscallTable();
   if (auditArch === 0) {
     return null;
@@ -224,6 +218,19 @@ export function generateSeccompFilter(): Buffer | null {
   }
 
   return buildBpfFilter(auditArch, blockedNumbers);
+}
+
+/**
+ * Generates a compiled BPF seccomp filter that blocks dangerous syscalls.
+ *
+ * Returns null if seccomp is disabled via BWRAP_SECCOMP=off or the
+ * host architecture is unsupported.
+ */
+export function generateSeccompFilter(): Buffer | null {
+  if (process.env['BWRAP_SECCOMP'] === 'off') {
+    return null;
+  }
+  return generateSeccompFilterBuffer();
 }
 
 /**
@@ -256,6 +263,38 @@ export function cleanupSeccomp(seccomp: { fd: number; path: string }): void {
   } catch {
     // fd may already be closed
   }
+  try {
+    fs.unlinkSync(seccomp.path);
+  } catch {
+    // file may already be removed
+  }
+}
+
+/**
+ * Writes the seccomp filter to a temp file and returns the path.
+ * Unlike prepareSeccompFd(), this does not open an fd — the caller
+ * passes the path to the child process (e.g. landlock-helper --seccomp FILE).
+ *
+ * Returns null if the filter is disabled or unsupported.
+ */
+export function prepareSeccompFile(): { path: string } | null {
+  const filter = generateSeccompFilterBuffer();
+  if (!filter) {
+    return null;
+  }
+
+  const tmpFile = path.join(
+    os.tmpdir(),
+    `seccomp-${process.pid}-${Date.now()}.bpf`,
+  );
+  fs.writeFileSync(tmpFile, filter);
+  return { path: tmpFile };
+}
+
+/**
+ * Cleans up a seccomp temp file (no fd to close).
+ */
+export function cleanupSeccompFile(seccomp: { path: string }): void {
   try {
     fs.unlinkSync(seccomp.path);
   } catch {

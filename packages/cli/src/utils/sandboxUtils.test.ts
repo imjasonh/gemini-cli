@@ -449,6 +449,7 @@ describe('sandboxUtils', () => {
       vi.mocked(os.platform).mockReturnValue('linux');
       vi.mocked(os.release).mockReturnValue('6.1.0-21-amd64');
       mockedAccess.mockResolvedValue(undefined);
+      mockedCommandExistsSync.mockReturnValue(true);
     });
 
     it('should return false on non-Linux', async () => {
@@ -456,7 +457,7 @@ describe('sandboxUtils', () => {
       expect(await isLandlockAvailable()).toBe(false);
     });
 
-    it('should return true on Linux 6.1 with Landlock LSM', async () => {
+    it('should return true on Linux 6.1 with Landlock LSM and helper binary', async () => {
       expect(await isLandlockAvailable()).toBe(true);
     });
 
@@ -477,6 +478,11 @@ describe('sandboxUtils', () => {
 
     it('should return false when /sys/kernel/security/landlock is not accessible', async () => {
       mockedAccess.mockRejectedValue(new Error('ENOENT'));
+      expect(await isLandlockAvailable()).toBe(false);
+    });
+
+    it('should return false when landlock-helper binary is not found', async () => {
+      mockedCommandExistsSync.mockReturnValue(false);
       expect(await isLandlockAvailable()).toBe(false);
     });
   });

@@ -35,7 +35,16 @@ import {
   isWSL,
 } from './sandboxUtils.js';
 import { buildBwrapProfile, BUILTIN_BWRAP_PROFILES } from './bwrapProfiles.js';
-import { prepareSeccompFd, cleanupSeccomp } from './bwrap-seccomp.js';
+import {
+  prepareSeccompFd,
+  cleanupSeccomp,
+  prepareSeccompFile,
+  cleanupSeccompFile,
+} from './bwrap-seccomp.js';
+import {
+  buildLandlockProfile,
+  BUILTIN_LANDLOCK_PROFILES,
+} from './landlockProfiles.js';
 
 const execAsync = promisify(exec);
 
@@ -218,6 +227,10 @@ export async function start_sandbox(
 
     if (config.command === 'bwrap') {
       return await startBwrapSandbox(config, nodeArgs, cliConfig, cliArgs);
+    }
+
+    if (config.command === 'landlock') {
+      return await startLandlockSandbox(config, nodeArgs, cliConfig, cliArgs);
     }
 
     debugLogger.log(`hopping into sandbox (command: ${config.command}) ...`);
@@ -1604,6 +1617,188 @@ async function startBwrapSandbox(
       if (code !== 0 && code !== null) {
         debugLogger.log(
           `Bubblewrap sandbox exited with code: ${code}, signal: ${signal}`,
+        );
+      }
+      resolve(code ?? 1);
+    });
+  });
+}
+
+async function startLandlockSandbox(
+  config: SandboxConfig,
+  nodeArgs: string[],
+  cliConfig?: Config,
+  cliArgs: string[] = [],
+): Promise<number> {
+  debugLogger.log('hopping into landlock sandbox...');
+
+  if (process.env['BUILD_SANDBOX']) {
+    throw new FatalSandboxError('Cannot BUILD_SANDBOX when using Landlock');
+  }
+
+  const profileName = process.env['LANDLOCK_PROFILE'] ?? 'permissive';
+  const workdir = path.resolve(process.cwd());
+  const home = homedir();
+  const tmp = os.tmpdir();
+
+  // Warn on WSL when workspace is under /mnt/ (Windows-mounted filesystem)
+  if (isWSL() && workdir.startsWith('/mnt/')) {
+    debugLogger.warn(
+      `Workspace is under /mnt/ (Windows filesystem). ` +
+        `Landlock rules may have permission issues with NTFS paths. ` +
+        `For best results, use a Linux filesystem path (e.g. /home/${os.userInfo().username}/...).`,
+    );
+  }
+
+  let profile;
+  if (BUILTIN_LANDLOCK_PROFILES.includes(profileName)) {
+    profile = buildLandlockProfile(profileName, workdir, home, tmp);
+  } else {
+    throw new FatalSandboxError(
+      `Unknown landlock profile '${profileName}'. ` +
+        `Available profiles: ${BUILTIN_LANDLOCK_PROFILES.join(', ')}`,
+    );
+  }
+
+  debugLogger.log(`using landlock (profile: ${profileName}) ...`);
+
+  // Prepare seccomp filter if enabled
+  const seccomp = profile.useSeccomp ? prepareSeccompFile() : null;
+  if (seccomp) {
+    debugLogger.log('seccomp filter enabled');
+  }
+
+  const args: string[] = [];
+
+  // Read-only paths
+  for (const p of profile.roPaths) {
+    if (fs.existsSync(p)) {
+      args.push('--ro', p);
+    }
+  }
+
+  // Read-write paths
+  for (const p of profile.rwPaths) {
+    if (!fs.existsSync(p)) {
+      fs.mkdirSync(p, { recursive: true });
+    }
+    args.push('--rw', p);
+  }
+
+  // Read+execute paths (system dirs)
+  for (const p of profile.rxPaths) {
+    if (fs.existsSync(p)) {
+      args.push('--rx', p);
+    }
+  }
+
+  // Seccomp filter via file path
+  if (seccomp) {
+    args.push('--seccomp', seccomp.path);
+  }
+
+  // Proxy support (host-side, like bwrap/seatbelt)
+  const proxyCommand = process.env['GEMINI_SANDBOX_PROXY_COMMAND'];
+  let proxyProcess: ChildProcess | undefined;
+
+  if (proxyCommand) {
+    proxyProcess = spawn(proxyCommand, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: true,
+      detached: true,
+    });
+    const stopProxy = () => {
+      debugLogger.log('stopping proxy...');
+      if (proxyProcess?.pid) {
+        process.kill(-proxyProcess.pid, 'SIGTERM');
+      }
+    };
+    process.off('exit', stopProxy);
+    process.on('exit', stopProxy);
+    process.off('SIGINT', stopProxy);
+    process.on('SIGINT', stopProxy);
+    process.off('SIGTERM', stopProxy);
+    process.on('SIGTERM', stopProxy);
+    proxyProcess.stderr?.on('data', (data) => {
+      debugLogger.debug(`[PROXY STDERR]: ${data.toString().trim()}`);
+    });
+    debugLogger.log('waiting for proxy to start...');
+    await execAsync(
+      'until timeout 0.25 curl -s http://localhost:8877; do sleep 0.25; done',
+    );
+  }
+
+  // The command to run inside the landlock sandbox
+  args.push('--', ...cliArgs);
+
+  // Environment: Landlock doesn't use namespaces, so env is inherited naturally.
+  // Set SANDBOX=landlock and forward proxy env vars.
+  const sandboxEnv: Record<string, string | undefined> = {
+    ...process.env,
+    SANDBOX: 'landlock',
+  };
+
+  if (proxyCommand) {
+    const proxy =
+      process.env['HTTPS_PROXY'] ||
+      process.env['https_proxy'] ||
+      process.env['HTTP_PROXY'] ||
+      process.env['http_proxy'] ||
+      'http://localhost:8877';
+    sandboxEnv['HTTPS_PROXY'] = proxy;
+    sandboxEnv['https_proxy'] = proxy;
+    sandboxEnv['HTTP_PROXY'] = proxy;
+    sandboxEnv['http_proxy'] = proxy;
+    const noProxy = process.env['NO_PROXY'] || process.env['no_proxy'];
+    if (noProxy) {
+      sandboxEnv['NO_PROXY'] = noProxy;
+      sandboxEnv['no_proxy'] = noProxy;
+    }
+  }
+
+  // NODE_OPTIONS
+  const existingNodeOptions = process.env['NODE_OPTIONS'] || '';
+  const allNodeOptions = [
+    ...(process.env['DEBUG'] ? ['--inspect-brk'] : []),
+    ...(existingNodeOptions ? [existingNodeOptions] : []),
+    ...nodeArgs,
+  ].join(' ');
+  if (allNodeOptions.length > 0) {
+    sandboxEnv['NODE_OPTIONS'] = allNodeOptions;
+  }
+
+  // Spawn landlock-helper
+  process.stdin.pause();
+  const sandboxProcess = spawn('landlock-helper', args, {
+    stdio: 'inherit',
+    env: sandboxEnv,
+  });
+
+  // Register proxy close handler after sandbox is spawned
+  if (proxyProcess) {
+    proxyProcess.on('close', (code, signal) => {
+      if (sandboxProcess.pid) {
+        process.kill(-sandboxProcess.pid, 'SIGTERM');
+      }
+      throw new FatalSandboxError(
+        `Proxy command '${proxyCommand}' exited with code ${code}, signal ${signal}`,
+      );
+    });
+  }
+
+  return new Promise((resolve, reject) => {
+    sandboxProcess.on('error', (err) => {
+      coreEvents.emitFeedback('error', 'Landlock sandbox process error', err);
+      reject(err);
+    });
+    sandboxProcess.on('close', (code, signal) => {
+      process.stdin.resume();
+      if (seccomp) {
+        cleanupSeccompFile(seccomp);
+      }
+      if (code !== 0 && code !== null) {
+        debugLogger.log(
+          `Landlock sandbox exited with code: ${code}, signal: ${signal}`,
         );
       }
       resolve(code ?? 1);
