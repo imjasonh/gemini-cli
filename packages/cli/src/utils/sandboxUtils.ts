@@ -12,6 +12,11 @@ import { promisify } from 'node:util';
 import { quote } from 'shell-quote';
 import { debugLogger, GEMINI_DIR } from '@google/gemini-cli-core';
 import commandExists from 'command-exists';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const execFileAsync = promisify(execFile);
 
@@ -377,13 +382,35 @@ export async function isLandlockAvailable(): Promise<boolean> {
     return false;
   }
 
-  // Check that the landlock-helper binary is in PATH
-  if (!commandExists.sync('landlock-helper')) {
-    debugLogger.log(
-      `isLandlockAvailable: 'landlock-helper' binary not found in PATH`,
-    );
+  // Check that the landlock-helper binary is available
+  if (!getLandlockHelperPath()) {
+    debugLogger.log(`isLandlockAvailable: 'landlock-helper' binary not found`);
     return false;
   }
 
   return true;
+}
+
+export function getLandlockHelperPath(): string | null {
+  const possiblePaths = [
+    // 1. Bundled binary (dist/utils/../landlock-helper)
+    path.join(__dirname, '..', 'landlock-helper'),
+    // 2. Dev binary relative to source (src/utils/../../native/landlock-helper)
+    path.join(__dirname, '..', '..', 'native', 'landlock-helper'),
+    // 3. Dev binary relative to CWD (useful for tests running from repo root)
+    path.join(process.cwd(), 'packages', 'cli', 'native', 'landlock-helper'),
+  ];
+
+  for (const p of possiblePaths) {
+    if (fs.existsSync(p)) {
+      return p;
+    }
+  }
+
+  // Check PATH as fallback
+  if (commandExists.sync('landlock-helper')) {
+    return 'landlock-helper';
+  }
+
+  return null;
 }

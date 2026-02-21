@@ -33,6 +33,7 @@ import {
   BUILTIN_SEATBELT_PROFILES,
   DEFAULT_BWRAP_PROFILE,
   isWSL,
+  getLandlockHelperPath,
 } from './sandboxUtils.js';
 import { buildBwrapProfile, BUILTIN_BWRAP_PROFILES } from './bwrapProfiles.js';
 import {
@@ -1768,8 +1769,13 @@ async function startLandlockSandbox(
   }
 
   // Spawn landlock-helper
+  const helperPath = getLandlockHelperPath();
+  if (!helperPath) {
+    throw new FatalSandboxError('landlock-helper binary not found');
+  }
+
   process.stdin.pause();
-  const sandboxProcess = spawn('landlock-helper', args, {
+  const sandboxProcess = spawn(helperPath, args, {
     stdio: 'inherit',
     env: sandboxEnv,
   });

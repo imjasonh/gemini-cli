@@ -15,6 +15,7 @@ import { EventEmitter } from 'node:events';
 const {
   mockedHomedir,
   mockedGetContainerPath,
+  mockedGetLandlockHelperPath,
   mockedPrepareSeccompFd,
   mockedCleanupSeccomp,
   mockedPrepareSeccompFile,
@@ -22,6 +23,7 @@ const {
 } = vi.hoisted(() => ({
   mockedHomedir: vi.fn().mockReturnValue('/home/user'),
   mockedGetContainerPath: vi.fn().mockImplementation((p: string) => p),
+  mockedGetLandlockHelperPath: vi.fn().mockReturnValue('landlock-helper'),
   mockedPrepareSeccompFd: vi
     .fn()
     .mockReturnValue({ fd: 99, path: '/tmp/bwrap-seccomp-test.bpf' }),
@@ -37,6 +39,7 @@ vi.mock('./sandboxUtils.js', async (importOriginal) => {
   return {
     ...actual,
     getContainerPath: mockedGetContainerPath,
+    getLandlockHelperPath: mockedGetLandlockHelperPath,
   };
 });
 
