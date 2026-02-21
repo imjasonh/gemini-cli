@@ -5,6 +5,7 @@
  */
 
 import {
+  debugLogger,
   getPackageJson,
   type SandboxConfig,
   FatalSandboxError,
@@ -15,6 +16,7 @@ import type { Settings } from './settings.js';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
+  detectContainerEnvironment,
   isBwrapAvailable,
   isLandlockAvailable,
   isMacOSContainerAvailable,
@@ -44,8 +46,10 @@ function isSandboxCommand(value: string): value is SandboxConfig['command'] {
 async function getSandboxCommand(
   sandbox?: boolean | string | null,
 ): Promise<SandboxConfig['command'] | ''> {
-  // If the SANDBOX env var is set, we're already inside the sandbox.
-  if (process.env['SANDBOX']) {
+  const containerEnv = detectContainerEnvironment();
+
+  // Already in Gemini's own sandbox — never re-sandbox
+  if (containerEnv.isGeminiSandbox) {
     return '';
   }
 
@@ -56,11 +60,35 @@ async function getSandboxCommand(
     environmentConfiguredSandbox?.length > 0
       ? environmentConfiguredSandbox
       : sandbox;
+  // Handle 'force' — used to override nested container detection
+  const forceNested = sandbox === 'force';
+  if (forceNested) {
+    sandbox = true;
+  }
+
   if (sandbox === '1' || sandbox === 'true') sandbox = true;
   else if (sandbox === '0' || sandbox === 'false' || !sandbox) sandbox = false;
 
   if (sandbox === false) {
     return '';
+  }
+
+  // Running inside an external container — skip sandboxing unless forced
+  if (containerEnv.detected && !forceNested) {
+    if (typeof sandbox === 'string') {
+      // User explicitly requested a specific sandbox command, allow it
+    } else {
+      debugLogger.log(
+        `Running inside ${containerEnv.type} container. ` +
+          `Sandboxing disabled (outer container provides isolation). ` +
+          `Set GEMINI_SANDBOX=force to override.`,
+      );
+      return '';
+    }
+  } else if (containerEnv.detected && forceNested) {
+    debugLogger.warn(
+      `Forcing sandbox inside ${containerEnv.type} container. This may not work correctly.`,
+    );
   }
 
   if (typeof sandbox === 'string' && sandbox) {

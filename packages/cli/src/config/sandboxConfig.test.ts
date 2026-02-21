@@ -45,12 +45,18 @@ vi.mock('node:os', async (importOriginal) => {
 });
 
 vi.mock('../utils/sandboxUtils.js', () => ({
+  detectContainerEnvironment: vi.fn().mockReturnValue({
+    detected: false,
+    type: 'none',
+    isGeminiSandbox: false,
+  }),
   isBwrapAvailable: vi.fn().mockResolvedValue(false),
   isLandlockAvailable: vi.fn().mockResolvedValue(false),
   isMacOSContainerAvailable: vi.fn().mockResolvedValue(false),
 }));
 
 import {
+  detectContainerEnvironment,
   isBwrapAvailable,
   isLandlockAvailable,
   isMacOSContainerAvailable,
@@ -59,6 +65,7 @@ import {
 const mockedGetPackageJson = vi.mocked(getPackageJson);
 const mockedCommandExistsSync = vi.mocked(commandExists.sync);
 const mockedOsPlatform = vi.mocked(os.platform);
+const mockedDetectContainerEnvironment = vi.mocked(detectContainerEnvironment);
 const mockedIsBwrapAvailable = vi.mocked(isBwrapAvailable);
 const mockedIsLandlockAvailable = vi.mocked(isLandlockAvailable);
 const mockedIsMacOSContainerAvailable = vi.mocked(isMacOSContainerAvailable);
@@ -73,6 +80,11 @@ describe('loadSandboxConfig', () => {
     delete process.env['GEMINI_SANDBOX'];
     mockedGetPackageJson.mockResolvedValue({
       config: { sandboxImageUri: 'default/image' },
+    });
+    mockedDetectContainerEnvironment.mockReturnValue({
+      detected: false,
+      type: 'none',
+      isGeminiSandbox: false,
     });
     mockedIsBwrapAvailable.mockResolvedValue(false);
     mockedIsLandlockAvailable.mockResolvedValue(false);
@@ -99,7 +111,11 @@ describe('loadSandboxConfig', () => {
   });
 
   it('should return undefined if already inside a sandbox (SANDBOX env var is set)', async () => {
-    process.env['SANDBOX'] = '1';
+    mockedDetectContainerEnvironment.mockReturnValue({
+      detected: true,
+      type: 'unknown',
+      isGeminiSandbox: true,
+    });
     const config = await loadSandboxConfig({}, { sandbox: true });
     expect(config).toBeUndefined();
   });
@@ -319,6 +335,63 @@ describe('loadSandboxConfig', () => {
       process.env['GEMINI_SANDBOX'] = 'docker';
       mockedCommandExistsSync.mockReturnValue(true);
       const config = await loadSandboxConfig({}, {});
+      expect(config).toBeUndefined();
+    });
+  });
+
+  describe('nested container detection', () => {
+    it('should return undefined when inside Gemini sandbox (isGeminiSandbox)', async () => {
+      mockedDetectContainerEnvironment.mockReturnValue({
+        detected: true,
+        type: 'unknown',
+        isGeminiSandbox: true,
+      });
+      const config = await loadSandboxConfig({}, { sandbox: true });
+      expect(config).toBeUndefined();
+    });
+
+    it('should skip sandboxing when inside Docker with sandbox: true', async () => {
+      mockedDetectContainerEnvironment.mockReturnValue({
+        detected: true,
+        type: 'docker',
+        isGeminiSandbox: false,
+      });
+      const config = await loadSandboxConfig({}, { sandbox: true });
+      expect(config).toBeUndefined();
+    });
+
+    it('should allow explicit sandbox command inside Docker', async () => {
+      mockedDetectContainerEnvironment.mockReturnValue({
+        detected: true,
+        type: 'docker',
+        isGeminiSandbox: false,
+      });
+      mockedOsPlatform.mockReturnValue('linux');
+      mockedIsBwrapAvailable.mockResolvedValue(true);
+      const config = await loadSandboxConfig({}, { sandbox: 'bwrap' });
+      expect(config).toEqual({ command: 'bwrap', image: 'default/image' });
+    });
+
+    it('should force sandbox inside container with GEMINI_SANDBOX=force', async () => {
+      mockedDetectContainerEnvironment.mockReturnValue({
+        detected: true,
+        type: 'docker',
+        isGeminiSandbox: false,
+      });
+      process.env['GEMINI_SANDBOX'] = 'force';
+      mockedOsPlatform.mockReturnValue('linux');
+      mockedIsLandlockAvailable.mockResolvedValue(true);
+      const config = await loadSandboxConfig({}, {});
+      expect(config).toEqual({ command: 'landlock', image: 'default/image' });
+    });
+
+    it('should skip sandboxing inside Kubernetes with sandbox: true', async () => {
+      mockedDetectContainerEnvironment.mockReturnValue({
+        detected: true,
+        type: 'kubernetes',
+        isGeminiSandbox: false,
+      });
+      const config = await loadSandboxConfig({ tools: { sandbox: true } }, {});
       expect(config).toBeUndefined();
     });
   });

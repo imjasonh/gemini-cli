@@ -36,6 +36,19 @@
 - On detection failure, falls back to `--rosetta` to let the container CLI
   decide
 
+## Nested Container Detection
+
+- `detectContainerEnvironment()` in `sandboxUtils.ts` checks multiple signals:
+  `SANDBOX` env, `/.dockerenv`, `/run/.containerenv`, `KUBERNETES_SERVICE_HOST`,
+  `WSL_DISTRO_NAME`, `container=systemd-nspawn`, and cgroup contents
+- When `sandbox: true` and inside an external container, sandboxing is
+  automatically skipped (outer container provides isolation)
+- Explicit sandbox commands (`GEMINI_SANDBOX=docker`) are still honored inside
+  containers
+- `GEMINI_SANDBOX=force` overrides the detection and forces auto-detection
+  inside the container
+- The check runs early in `getSandboxCommand()` before any command validation
+
 ## Codebase Architecture
 
 - `sandbox.ts` `start_sandbox()` routes by `config.command`:

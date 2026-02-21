@@ -29,6 +29,76 @@ export const BUILTIN_SEATBELT_PROFILES = [
   'strict-proxied',
 ];
 
+export type ContainerEnvironmentType =
+  | 'docker'
+  | 'podman'
+  | 'kubernetes'
+  | 'wsl'
+  | 'systemd-nspawn'
+  | 'unknown'
+  | 'none';
+
+export interface ContainerEnvironment {
+  detected: boolean;
+  type: ContainerEnvironmentType;
+  isGeminiSandbox: boolean;
+}
+
+/**
+ * Detects whether we're running inside an existing container or sandbox.
+ * Used to avoid nested sandboxing, which can fail or behave unexpectedly.
+ */
+export function detectContainerEnvironment(): ContainerEnvironment {
+  // Already in Gemini's own sandbox
+  if (process.env['SANDBOX']) {
+    return { detected: true, type: 'unknown', isGeminiSandbox: true };
+  }
+
+  // Docker detection
+  if (fs.existsSync('/.dockerenv')) {
+    return { detected: true, type: 'docker', isGeminiSandbox: false };
+  }
+
+  // Podman detection
+  if (fs.existsSync('/run/.containerenv')) {
+    return { detected: true, type: 'podman', isGeminiSandbox: false };
+  }
+
+  // Kubernetes detection
+  if (process.env['KUBERNETES_SERVICE_HOST']) {
+    return { detected: true, type: 'kubernetes', isGeminiSandbox: false };
+  }
+
+  // WSL detection
+  if (
+    process.env['WSL_DISTRO_NAME'] ||
+    fs.existsSync('/proc/sys/fs/binfmt_misc/WSLInterop')
+  ) {
+    return { detected: true, type: 'wsl', isGeminiSandbox: false };
+  }
+
+  // systemd-nspawn detection
+  if (process.env['container'] === 'systemd-nspawn') {
+    return { detected: true, type: 'systemd-nspawn', isGeminiSandbox: false };
+  }
+
+  // Cgroup-based detection (fallback)
+  try {
+    const cgroup = fs.readFileSync('/proc/1/cgroup', 'utf8');
+    if (
+      cgroup.includes('docker') ||
+      cgroup.includes('kubepods') ||
+      cgroup.includes('lxc')
+    ) {
+      return { detected: true, type: 'unknown', isGeminiSandbox: false };
+    }
+  } catch {
+    // Not in a container, or /proc/1/cgroup is not readable
+  }
+
+  return { detected: false, type: 'none', isGeminiSandbox: false };
+}
+
 export function getContainerPath(hostPath: string): string {
   if (os.platform() !== 'win32') {
     return hostPath;

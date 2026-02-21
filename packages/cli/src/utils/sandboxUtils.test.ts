@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import { readFile, access } from 'node:fs/promises';
 import commandExists from 'command-exists';
 import {
+  detectContainerEnvironment,
   getContainerPath,
   parseImageName,
   ports,
@@ -64,6 +65,97 @@ describe('sandboxUtils', () => {
 
   afterEach(() => {
     process.env = originalEnv;
+  });
+
+  describe('detectContainerEnvironment', () => {
+    it('should detect Gemini sandbox via SANDBOX env var', () => {
+      process.env['SANDBOX'] = 'my-container';
+      const result = detectContainerEnvironment();
+      expect(result).toEqual({
+        detected: true,
+        type: 'unknown',
+        isGeminiSandbox: true,
+      });
+    });
+
+    it('should detect Docker via /.dockerenv', () => {
+      vi.mocked(fs.existsSync).mockImplementation((p) => p === '/.dockerenv');
+      const result = detectContainerEnvironment();
+      expect(result).toEqual({
+        detected: true,
+        type: 'docker',
+        isGeminiSandbox: false,
+      });
+    });
+
+    it('should detect Podman via /run/.containerenv', () => {
+      vi.mocked(fs.existsSync).mockImplementation(
+        (p) => p === '/run/.containerenv',
+      );
+      const result = detectContainerEnvironment();
+      expect(result).toEqual({
+        detected: true,
+        type: 'podman',
+        isGeminiSandbox: false,
+      });
+    });
+
+    it('should detect Kubernetes via KUBERNETES_SERVICE_HOST', () => {
+      process.env['KUBERNETES_SERVICE_HOST'] = '10.0.0.1';
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      const result = detectContainerEnvironment();
+      expect(result).toEqual({
+        detected: true,
+        type: 'kubernetes',
+        isGeminiSandbox: false,
+      });
+    });
+
+    it('should detect WSL via WSL_DISTRO_NAME', () => {
+      process.env['WSL_DISTRO_NAME'] = 'Ubuntu';
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      const result = detectContainerEnvironment();
+      expect(result).toEqual({
+        detected: true,
+        type: 'wsl',
+        isGeminiSandbox: false,
+      });
+    });
+
+    it('should detect systemd-nspawn', () => {
+      process.env['container'] = 'systemd-nspawn';
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      const result = detectContainerEnvironment();
+      expect(result).toEqual({
+        detected: true,
+        type: 'systemd-nspawn',
+        isGeminiSandbox: false,
+      });
+    });
+
+    it('should detect container via cgroups', () => {
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      vi.mocked(fs.readFileSync).mockReturnValue('12:devices:/docker/abc123\n');
+      const result = detectContainerEnvironment();
+      expect(result).toEqual({
+        detected: true,
+        type: 'unknown',
+        isGeminiSandbox: false,
+      });
+    });
+
+    it('should return none when not in any container', () => {
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      vi.mocked(fs.readFileSync).mockImplementation(() => {
+        throw new Error('ENOENT');
+      });
+      const result = detectContainerEnvironment();
+      expect(result).toEqual({
+        detected: false,
+        type: 'none',
+        isGeminiSandbox: false,
+      });
+    });
   });
 
   describe('getContainerPath', () => {
