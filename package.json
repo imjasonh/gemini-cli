@@ -55,7 +55,7 @@
     "test:integration:sandbox:bwrap": "cross-env GEMINI_SANDBOX=bwrap vitest run --root ./integration-tests",
     "test:integration:sandbox:landlock": "cross-env GEMINI_SANDBOX=landlock vitest run --root ./integration-tests",
     "test:integration:sandbox:sandbox-exec": "cross-env GEMINI_SANDBOX=sandbox-exec vitest run --root ./integration-tests",
-    "test:integration:sandbox:macos-container": "cross-env GEMINI_SANDBOX=macos-container vitest run --root ./integration-tests",
+    "test:integration:sandbox:macos-container": "cross-env GEMINI_SANDBOX=macos-container npm run build:sandbox && cross-env GEMINI_SANDBOX=macos-container vitest run --root ./integration-tests",
     "lint": "eslint . --cache",
     "lint:fix": "eslint . --fix --ext .ts,.tsx && eslint integration-tests --fix && eslint scripts --fix && npm run format",
     "lint:ci": "npm run lint:all",

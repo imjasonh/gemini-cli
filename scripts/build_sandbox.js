@@ -168,12 +168,20 @@ function buildImage(imageName, dockerfile) {
   const finalImageName = `${imageName.split(':')[0]}:${imageTag}`;
 
   try {
-    execSync(
-      `${sandboxCommand} build ${buildCommandArgs} ${
-        process.env.BUILD_SANDBOX_FLAGS || ''
-      } --build-arg CLI_VERSION_ARG=${npmPackageVersion} -f "${dockerfile}" -t "${finalImageName}" .`,
-      { stdio: buildStdout, shell: shellToUse },
-    );
+    if (sandboxCommand === 'macos-container') {
+      // Apple's `container` CLI uses `container build` syntax.
+      execSync(
+        `container build --build-arg CLI_VERSION_ARG=${npmPackageVersion} -f "${dockerfile}" -t "${finalImageName}" .`,
+        { stdio: buildStdout, shell: shellToUse },
+      );
+    } else {
+      execSync(
+        `${sandboxCommand} build ${buildCommandArgs} ${
+          process.env.BUILD_SANDBOX_FLAGS || ''
+        } --build-arg CLI_VERSION_ARG=${npmPackageVersion} -f "${dockerfile}" -t "${finalImageName}" .`,
+        { stdio: buildStdout, shell: shellToUse },
+      );
+    }
     console.log(`built ${finalImageName}`);
 
     // If an output file path was provided via command-line, write the final image URI to it.
@@ -200,4 +208,6 @@ function buildImage(imageName, dockerfile) {
 
 buildImage(image, dockerFile);
 
-execSync(`${sandboxCommand} image prune -f`, { stdio: 'ignore' });
+if (sandboxCommand !== 'macos-container') {
+  execSync(`${sandboxCommand} image prune -f`, { stdio: 'ignore' });
+}
