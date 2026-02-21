@@ -31,8 +31,9 @@ jobs:
             os: 'ubuntu-latest'
           - sandbox: 'sandbox-exec'
             os: 'macos-latest'
-          - sandbox: 'macos-container'
-            os: 'macos-26'
+          # macos-container requires Apple's Virtualization.framework, which is
+          # unavailable on GHA runners (no nested VZ in ARM64 VMs).
+          # Both `container build` and `container run` fail. Test locally only.
           - sandbox: 'docker'
             os: 'ubuntu-latest'
 
@@ -89,32 +90,6 @@ jobs:
             exit 1
           fi
 
-      - name: 'Install macOS container CLI'
-        if: "matrix.sandbox == 'macos-container'"
-        run: |
-          # Install from the signed pkg on GitHub releases (official method).
-          curl -fsSL -o /tmp/container.pkg \
-            https://github.com/apple/container/releases/download/0.9.0/container-installer-signed.pkg
-          sudo installer -pkg /tmp/container.pkg -target /
-          rm /tmp/container.pkg
-
-          # Verify installation
-          if ! command -v container &>/dev/null; then
-            echo "::error::Failed to install Apple container CLI"
-            exit 1
-          fi
-          container --version
-
-          # Start the container system daemon.
-          # First run prompts to download a default kernel; pipe yes to accept.
-          yes | container system start
-
-          # Smoke-test: verify VZ is available for running containers.
-          # GHA macOS runners run inside VMs; nested VZ may not be available.
-          echo "Testing container run (VZ diagnostic)..."
-          container image pull docker.io/library/alpine:latest
-          container run --rm alpine echo "container run: VZ works"
-
       - name: 'Install dependencies'
         run: 'npm ci'
 
@@ -132,7 +107,7 @@ jobs:
             packages/cli/src/utils/landlockProfiles.test.ts
 
       - name: 'Run sandbox unit tests (macOS)'
-        if: "runner.os == 'macOS' && matrix.sandbox != 'macos-container'"
+        if: "runner.os == 'macOS'"
         run: |
           npx vitest run \
             packages/cli/src/utils/sandbox.test.ts \
