@@ -401,12 +401,31 @@ export async function isLandlockAvailable(): Promise<boolean> {
 }
 
 export function getLandlockHelperPath(): string | null {
+  const archSuffix =
+    process.arch === 'arm64'
+      ? '-arm64'
+      : process.arch === 'x64'
+        ? '-amd64'
+        : '';
+
   const possiblePaths = [
-    // 1. Bundled binary (dist/utils/../landlock-helper)
+    // 1. Bundled binary (bundle/landlock-helper)
+    path.join(__dirname, `landlock-helper${archSuffix}`),
+    path.join(__dirname, 'landlock-helper'),
+    // 2. Dist binary (dist/utils/../landlock-helper)
+    path.join(__dirname, '..', `landlock-helper${archSuffix}`),
     path.join(__dirname, '..', 'landlock-helper'),
-    // 2. Dev binary relative to source (src/utils/../../native/landlock-helper)
+    // 3. Dev binary relative to source (src/utils/../../native/landlock-helper)
+    path.join(__dirname, '..', '..', 'native', `landlock-helper${archSuffix}`),
     path.join(__dirname, '..', '..', 'native', 'landlock-helper'),
-    // 3. Dev binary relative to CWD (useful for tests running from repo root)
+    // 4. Dev binary relative to CWD (useful for tests running from repo root)
+    path.join(
+      process.cwd(),
+      'packages',
+      'cli',
+      'native',
+      `landlock-helper${archSuffix}`,
+    ),
     path.join(process.cwd(), 'packages', 'cli', 'native', 'landlock-helper'),
   ];
 
@@ -417,6 +436,9 @@ export function getLandlockHelperPath(): string | null {
   }
 
   // Check PATH as fallback
+  if (archSuffix && commandExists.sync(`landlock-helper${archSuffix}`)) {
+    return `landlock-helper${archSuffix}`;
+  }
   if (commandExists.sync('landlock-helper')) {
     return 'landlock-helper';
   }

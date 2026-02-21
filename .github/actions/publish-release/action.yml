@@ -125,6 +125,12 @@ runs:
           echo "Dry run enabled. Skipping push."
         fi
 
+    - name: 'Install cross-compilers'
+      shell: 'bash'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu
+
     - name: '🛠️ Build and Prepare Packages'
       working-directory: '${{ inputs.working-directory }}'
       shell: 'bash'

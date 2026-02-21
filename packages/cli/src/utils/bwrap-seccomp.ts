@@ -45,11 +45,14 @@ const SYSCALLS_X86_64: Record<string, number> = {
   request_key: 249,
   keyctl: 250,
   unshare: 272,
+  perf_event_open: 298,
   setns: 308,
   process_vm_readv: 310,
   process_vm_writev: 311,
   finit_module: 313,
   kexec_file_load: 320,
+  bpf: 321,
+  userfaultfd: 323,
   clone3: 435,
 };
 
@@ -72,10 +75,13 @@ const SYSCALLS_AARCH64: Record<string, number> = {
   add_key: 217,
   request_key: 218,
   keyctl: 219,
+  perf_event_open: 241,
   setns: 268,
   process_vm_readv: 270,
   process_vm_writev: 271,
   finit_module: 273,
+  bpf: 280,
+  userfaultfd: 282,
   kexec_file_load: 294,
   clone3: 435,
 };
@@ -86,6 +92,7 @@ const BLOCKED_SYSCALLS = [
   'ptrace',
   'process_vm_readv',
   'process_vm_writev',
+  'perf_event_open',
 
   // Kernel module operations
   'init_module',
@@ -119,6 +126,10 @@ const BLOCKED_SYSCALLS = [
   'clock_settime',
   'settimeofday',
   'adjtimex',
+
+  // Advanced kernel features (often used in exploits)
+  'bpf',
+  'userfaultfd',
 ];
 
 // Syscalls blocked with ENOSYS instead of EPERM. glibc 2.34+ uses clone3

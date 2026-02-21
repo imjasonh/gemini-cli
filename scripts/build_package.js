@@ -39,6 +39,25 @@ execSync('node ../../scripts/copy_files.js', { stdio: 'inherit' });
 const nativeDir = join(process.cwd(), 'native');
 if (os.platform() === 'linux' && existsSync(join(nativeDir, 'Makefile'))) {
   console.log('Building native components...');
+  try {
+    execSync('which x86_64-linux-gnu-gcc');
+    execSync('which aarch64-linux-gnu-gcc');
+    execSync('make cross', { stdio: 'inherit', cwd: nativeDir });
+    if (existsSync(join(nativeDir, 'landlock-helper-amd64'))) {
+      cpSync(
+        join(nativeDir, 'landlock-helper-amd64'),
+        join(process.cwd(), 'dist', 'landlock-helper-amd64'),
+      );
+    }
+    if (existsSync(join(nativeDir, 'landlock-helper-arm64'))) {
+      cpSync(
+        join(nativeDir, 'landlock-helper-arm64'),
+        join(process.cwd(), 'dist', 'landlock-helper-arm64'),
+      );
+    }
+  } catch (_e) {
+    console.log('Cross-compilation failed, falling back to native build...');
+  }
   execSync('make', { stdio: 'inherit', cwd: nativeDir });
   // Copy artifact to dist so it's included in the package
   if (existsSync(join(nativeDir, 'landlock-helper'))) {

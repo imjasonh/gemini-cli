@@ -202,6 +202,12 @@ static int load_seccomp_file(const char *filepath)
         return -1;
     }
 
+    if (st.st_size <= 0) {
+        fprintf(stderr, "landlock-helper: seccomp file is empty or invalid size\n");
+        close(fd);
+        return -1;
+    }
+
     void *buf = malloc((size_t)st.st_size);
     if (!buf) {
         fprintf(stderr, "landlock-helper: malloc failed\n");

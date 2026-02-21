@@ -5,6 +5,7 @@
  */
 
 import path from 'node:path';
+import fs from 'node:fs';
 import { FatalSandboxError } from '@google/gemini-cli-core';
 
 export interface BwrapProfile {
@@ -59,7 +60,7 @@ export function buildBwrapProfile(
   // Ensure the node binary's directory is accessible. On some systems
   // (e.g. GitHub Actions runners) node lives outside standard paths
   // like /opt/hostedtoolcache/.
-  const nodeDir = path.dirname(process.execPath);
+  const nodeDir = path.dirname(fs.realpathSync(process.execPath));
   if (!systemRoBinds.some((dir) => nodeDir.startsWith(dir))) {
     systemRoBinds.push(nodeDir);
   }
@@ -101,7 +102,7 @@ export function buildBwrapProfile(
         name: profileName,
         rwBinds: [workdir],
         roBinds: systemRoBinds,
-        shareNetwork: true,
+        shareNetwork: false,
       };
 
     default:

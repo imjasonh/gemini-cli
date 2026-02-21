@@ -1479,15 +1479,13 @@ async function startBwrapSandbox(
   // Ensure the CLI entry script directory is accessible inside the sandbox.
   // When run from a project checkout (e.g. /home/runner/work/gemini-cli/bundle/)
   // this path isn't covered by system dirs or the workdir.
-  if (cliArgs.length >= 2) {
-    const scriptDir = path.dirname(path.resolve(cliArgs[1]));
+  if (cliArgs.length >= 2 && fs.existsSync(cliArgs[1])) {
+    const scriptDir = path.dirname(fs.realpathSync(cliArgs[1]));
     const allBinds = [...profile.roBinds, ...profile.rwBinds];
     if (
       !allBinds.some((b) => scriptDir === b || scriptDir.startsWith(b + '/'))
     ) {
-      if (fs.existsSync(scriptDir)) {
-        args.push('--ro-bind', scriptDir, scriptDir);
-      }
+      args.push('--ro-bind', scriptDir, scriptDir);
     }
   }
 
@@ -1715,8 +1713,8 @@ async function startLandlockSandbox(
   }
 
   // Ensure the CLI entry script directory is accessible inside the sandbox.
-  if (cliArgs.length >= 2) {
-    const scriptDir = path.dirname(path.resolve(cliArgs[1]));
+  if (cliArgs.length >= 2 && fs.existsSync(cliArgs[1])) {
+    const scriptDir = path.dirname(fs.realpathSync(cliArgs[1]));
     const allPaths = [
       ...profile.rxPaths,
       ...profile.rwPaths,
@@ -1725,9 +1723,7 @@ async function startLandlockSandbox(
     if (
       !allPaths.some((p) => scriptDir === p || scriptDir.startsWith(p + '/'))
     ) {
-      if (fs.existsSync(scriptDir)) {
-        args.push('--rx', scriptDir);
-      }
+      args.push('--rx', scriptDir);
     }
   }
 
@@ -1792,6 +1788,23 @@ async function startLandlockSandbox(
     if (noProxy) {
       sandboxEnv['NO_PROXY'] = noProxy;
       sandboxEnv['no_proxy'] = noProxy;
+    }
+  }
+
+  // Custom env from SANDBOX_ENV
+  if (process.env['SANDBOX_ENV']) {
+    for (let env of process.env['SANDBOX_ENV'].split(',')) {
+      if ((env = env.trim())) {
+        if (env.includes('=')) {
+          const [key, ...valueParts] = env.split('=');
+          sandboxEnv[key] = valueParts.join('=');
+          debugLogger.log(`SANDBOX_ENV: ${key}=${sandboxEnv[key]}`);
+        } else {
+          throw new FatalSandboxError(
+            'SANDBOX_ENV must be a comma-separated list of key=value pairs',
+          );
+        }
+      }
     }
   }
 

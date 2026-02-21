@@ -751,8 +751,10 @@ their corresponding top-level category object in your `settings.json` file.
 #### `tools`
 
 - **`tools.sandbox`** (boolean | string):
-  - **Description:** Sandbox execution environment. Set to a boolean to enable
-    or disable the sandbox, or provide a string path to a sandbox profile.
+  - **Description:** Sandbox execution environment. Set to true to auto-detect,
+    false to disable, or specify: "docker", "podman", "sandbox-exec" (macOS),
+    "bwrap" (Linux), "landlock" (Linux, recommended), or "macos-container"
+    (macOS 15+).
   - **Default:** `undefined`
   - **Requires restart:** Yes
 
