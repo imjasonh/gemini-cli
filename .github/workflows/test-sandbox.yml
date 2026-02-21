@@ -134,6 +134,7 @@ jobs:
 
       - name: 'Run sandbox verification test'
         env:
+          GEMINI_API_KEY: 'fake-key-for-sandbox-test'
           KEEP_OUTPUT: 'true'
           VERBOSE: 'true'
           GEMINI_TELEMETRY_ENABLED: 'true'
