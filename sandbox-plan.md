@@ -28,13 +28,13 @@ recommended defaults.
 
 The new sandbox modes represent different security paradigms:
 
-| Mode              | Type                | Environment               | Security Level | Notes                                                                 |
-| ----------------- | ------------------- | ------------------------- | -------------- | --------------------------------------------------------------------- |
-| `sandbox-exec`    | Process restriction | Native macOS              | Medium         | Seatbelt profiles limit access, but no namespace isolation            |
-| `docker`/`podman` | Container isolation | Linux container           | Medium         | Namespaces + seccomp, but **volume mounts expose workspace/settings** |
-| `bwrap`           | Namespace isolation | Host Linux + restrictions | Medium-High    | Namespace isolation + seccomp, shares kernel                          |
-| `landlock`        | Landlock + seccomp  | Host Linux + restrictions | Medium-High    | Filesystem ACLs + syscall filtering, shares kernel                    |
-| `macos-container` | VM isolation        | Linux VM                  | **High**       | Separate kernel; only true strong isolation                           |
+| Mode              | Type                | Environment               | Security Level | Notes                                                                  |
+| ----------------- | ------------------- | ------------------------- | -------------- | ---------------------------------------------------------------------- |
+| `sandbox-exec`    | Process restriction | Native macOS              | Medium         | Seatbelt profiles limit access, but no namespace isolation             |
+| `docker`/`podman` | Container isolation | Linux container           | Medium         | Namespaces + seccomp, but **volume mounts expose workspace/settings**  |
+| `bwrap`           | Namespace isolation | Host Linux + restrictions | Medium-High    | Namespace isolation + seccomp, shares kernel                           |
+| `landlock`        | Landlock + seccomp  | Host Linux + restrictions | Medium-High    | Filesystem ACLs + syscall filtering, shares kernel                     |
+| `macos-container` | VM isolation        | Linux VM                  | Medium-High    | Separate kernel protects host; home dir mounted reduces data isolation |
 
 **Why Docker/Podman is only "Medium" security:**
 

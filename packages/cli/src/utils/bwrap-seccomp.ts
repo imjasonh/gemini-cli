@@ -27,6 +27,8 @@ const SECCOMP_RET_ERRNO_EPERM = 0x00050001; // SECCOMP_RET_ERRNO | EPERM
 
 // Syscall numbers for x86_64 (from arch/x86/entry/syscalls/syscall_64.tbl)
 const SYSCALLS_X86_64: Record<string, number> = {
+  chroot: 161,
+  pivot_root: 155,
   ptrace: 101,
   personality: 135,
   adjtimex: 159,
@@ -51,6 +53,8 @@ const SYSCALLS_X86_64: Record<string, number> = {
 
 // Syscall numbers for aarch64 (from include/uapi/asm-generic/unistd.h)
 const SYSCALLS_AARCH64: Record<string, number> = {
+  pivot_root: 41,
+  chroot: 51,
   umount2: 39,
   mount: 40,
   personality: 92,
@@ -97,9 +101,11 @@ const BLOCKED_SYSCALLS = [
   'setns',
   'unshare',
 
-  // Mount operations (belt-and-suspenders with mount namespace)
+  // Mount/root operations (belt-and-suspenders with mount namespace)
   'mount',
   'umount2',
+  'pivot_root',
+  'chroot',
 
   // Reboot/power operations
   'reboot',

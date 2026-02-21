@@ -1188,6 +1188,49 @@ describe('sandbox', () => {
 
         await expect(start_sandbox(config)).rejects.toThrow(FatalSandboxError);
       });
+
+      it('should add --ro-bind for CLI entry script directory', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = {
+          command: 'bwrap',
+          image: 'some-image',
+        };
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        // Simulate cliArgs pointing to an entry script outside standard dirs
+        const promise = start_sandbox(config, [], undefined, [
+          'node',
+          '/opt/custom/bundle/gemini.js',
+          '--prompt',
+          'hello',
+        ]);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        const bwrapArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+        // The script dir /opt/custom/bundle should be ro-bound
+        expect(bwrapArgs).toContain('--ro-bind');
+        const roBindPairs: string[] = [];
+        for (let i = 0; i < bwrapArgs.length; i++) {
+          if (bwrapArgs[i] === '--ro-bind') {
+            roBindPairs.push(bwrapArgs[i + 1]);
+          }
+        }
+        expect(roBindPairs).toContain('/opt/custom/bundle');
+      });
     });
 
     describe('Landlock sandbox', () => {
@@ -1416,6 +1459,48 @@ describe('sandbox', () => {
         };
 
         await expect(start_sandbox(config)).rejects.toThrow(FatalSandboxError);
+      });
+
+      it('should add --rx for CLI entry script directory', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = {
+          command: 'landlock',
+          image: 'some-image',
+        };
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        // Simulate cliArgs pointing to an entry script outside standard dirs
+        const promise = start_sandbox(config, [], undefined, [
+          'node',
+          '/opt/custom/bundle/gemini.js',
+          '--prompt',
+          'hello',
+        ]);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        const landlockArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+        // The script dir /opt/custom/bundle should have --rx access
+        const rxPaths: string[] = [];
+        for (let i = 0; i < landlockArgs.length; i++) {
+          if (landlockArgs[i] === '--rx') {
+            rxPaths.push(landlockArgs[i + 1]);
+          }
+        }
+        expect(rxPaths).toContain('/opt/custom/bundle');
       });
 
       it('should pass cliArgs after -- separator', async () => {

@@ -187,6 +187,32 @@ describe('bwrap-seccomp', () => {
         _testing.SYSCALLS_AARCH64['ptrace'],
       );
     });
+
+    it('should include pivot_root and chroot in blocked syscalls', () => {
+      expect(_testing.BLOCKED_SYSCALLS).toContain('pivot_root');
+      expect(_testing.BLOCKED_SYSCALLS).toContain('chroot');
+    });
+
+    it('should embed all blocked syscall numbers in the BPF filter', () => {
+      const filter = generateSeccompFilterBuffer()!;
+      // Extract all syscall numbers checked in the filter.
+      // Instructions [3..N+2] are JEQ checks; the k field (offset +4) is the syscall nr.
+      const N = _testing.BLOCKED_SYSCALLS.length;
+      const checkedNumbers = new Set<number>();
+      for (let i = 0; i < N; i++) {
+        const off = (3 + i) * 8;
+        checkedNumbers.add(filter.readUInt32LE(off + 4));
+      }
+
+      // Every blocked syscall's number should appear
+      for (const name of _testing.BLOCKED_SYSCALLS) {
+        const nr = _testing.SYSCALLS_X86_64[name];
+        expect(
+          checkedNumbers.has(nr),
+          `Expected syscall '${name}' (nr ${nr}) to be in the BPF filter`,
+        ).toBe(true);
+      }
+    });
   });
 
   describe('prepareSeccompFd', () => {

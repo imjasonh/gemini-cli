@@ -41,7 +41,7 @@ The benefits of sandboxing include:
 | Image required    | No            | Yes                  | Yes           | No            | No            |
 | Network isolation | Profile-based | Yes                  | Yes           | Profile-based | Profile-based |
 | Resource overhead | Low           | Medium               | Medium        | Low           | Low           |
-| Security level    | Medium        | High                 | Medium        | Medium-High   | Medium-High   |
+| Security level    | Medium        | Medium-High\*        | Medium        | Medium-High   | Medium-High   |
 
 **Quick guide:**
 
@@ -51,6 +51,12 @@ The benefits of sandboxing include:
 - **Linux**: `landlock` is recommended (auto-detected with `sandbox: true`). Use
   `bwrap` on older kernels, or `docker`/`podman` for a consistent container
   environment.
+
+\*`macos-container` runs a separate Linux kernel, which protects the host from
+kernel exploits inside the sandbox. However, the home directory and workspace
+are mounted into the VM, so data exposure is similar to container-based modes.
+The VM boundary provides stronger kernel-level isolation, not stronger data
+isolation.
 
 ## Sandboxing methods
 
@@ -88,7 +94,7 @@ isolation.
 
 **Benefits**:
 
-- Full VM isolation (separate kernel from host)
+- Separate kernel from host (protects against kernel exploits in the sandbox)
 - Uses the same sandbox image as Docker/Podman
 - Rosetta support for x86_64 images on Apple Silicon
 
@@ -96,6 +102,7 @@ isolation.
 
 - Runs Linux, not macOS (macOS-specific tools like `open`, `pbcopy` are
   unavailable)
+- Home directory is mounted into the VM (data exposure similar to Docker)
 - Slightly higher startup time and memory usage than Seatbelt
 
 ### 4. Bubblewrap (Linux only)

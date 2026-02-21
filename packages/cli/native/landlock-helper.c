@@ -149,15 +149,22 @@ static uint64_t access_mask_for_abi(int abi)
 struct path_entry {
     const char *path;
     uint64_t    access;
+    int         fatal;  /* fail if path cannot be opened */
 };
 
-static int add_path_rule(int ruleset_fd, const char *path, uint64_t access)
+static int add_path_rule(int ruleset_fd, const char *path, uint64_t access,
+                         int fatal_on_missing)
 {
     int fd = open(path, O_PATH | O_CLOEXEC);
     if (fd < 0) {
-        fprintf(stderr, "landlock-helper: warning: cannot open '%s': %s\n",
+        if (fatal_on_missing) {
+            fprintf(stderr, "landlock-helper: error: cannot open '%s': %s\n",
+                    path, strerror(errno));
+            return -1;
+        }
+        fprintf(stderr, "landlock-helper: warning: cannot open '%s': %s (skipped)\n",
                 path, strerror(errno));
-        return 0; /* non-fatal: path may not exist */
+        return 0;
     }
 
     struct landlock_path_beneath_attr attr = {
@@ -169,9 +176,9 @@ static int add_path_rule(int ruleset_fd, const char *path, uint64_t access)
     close(fd);
 
     if (ret < 0) {
-        fprintf(stderr, "landlock-helper: warning: landlock_add_rule failed for '%s': %s\n",
+        fprintf(stderr, "landlock-helper: error: landlock_add_rule failed for '%s': %s\n",
                 path, strerror(errno));
-        return 0;
+        return -1;
     }
     return 0;
 }
@@ -260,6 +267,7 @@ int main(int argc, char **argv)
             }
             paths[num_paths].path = argv[i];
             paths[num_paths].access = ACCESS_RO;
+            paths[num_paths].fatal = 0;
             num_paths++;
         } else if (strcmp(argv[i], "--rw") == 0) {
             if (++i >= argc) usage(argv[0]);
@@ -269,6 +277,7 @@ int main(int argc, char **argv)
             }
             paths[num_paths].path = argv[i];
             paths[num_paths].access = 0; /* placeholder, set after ABI detection */
+            paths[num_paths].fatal = 1;  /* writable paths must exist */
             num_paths++;
         } else if (strcmp(argv[i], "--rx") == 0) {
             if (++i >= argc) usage(argv[0]);
@@ -278,6 +287,7 @@ int main(int argc, char **argv)
             }
             paths[num_paths].path = argv[i];
             paths[num_paths].access = ACCESS_RX;
+            paths[num_paths].fatal = 0;
             num_paths++;
         } else if (strcmp(argv[i], "--seccomp") == 0) {
             if (++i >= argc) usage(argv[0]);
@@ -324,7 +334,11 @@ int main(int argc, char **argv)
 
     /* Add rules for each path */
     for (int i = 0; i < num_paths; i++) {
-        add_path_rule(ruleset_fd, paths[i].path, paths[i].access);
+        if (add_path_rule(ruleset_fd, paths[i].path, paths[i].access,
+                          paths[i].fatal) < 0) {
+            close(ruleset_fd);
+            return 1;
+        }
     }
 
     /* Prevent gaining new privileges (required for both Landlock and seccomp) */
