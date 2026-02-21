@@ -33,7 +33,7 @@ export type ContainerEnvironmentType =
   | 'docker'
   | 'podman'
   | 'kubernetes'
-  | 'wsl'
+  | 'wsl1'
   | 'systemd-nspawn'
   | 'unknown'
   | 'none';
@@ -45,8 +45,46 @@ export interface ContainerEnvironment {
 }
 
 /**
+ * Detects whether we're running inside WSL (Windows Subsystem for Linux).
+ * Checks for the WSL_DISTRO_NAME environment variable or WSLInterop in binfmt.
+ */
+export function isWSL(): boolean {
+  if (os.platform() !== 'linux') {
+    return false;
+  }
+  return !!(
+    process.env['WSL_DISTRO_NAME'] ||
+    fs.existsSync('/proc/sys/fs/binfmt_misc/WSLInterop')
+  );
+}
+
+/**
+ * Detects whether we're running inside WSL2 (as opposed to WSL1).
+ * WSL2 uses a real Linux kernel (5.x+) with full namespace/seccomp support.
+ * WSL1 uses NT kernel translation with a 4.4.x version string.
+ */
+export function isWSL2(): boolean {
+  if (!isWSL()) {
+    return false;
+  }
+  const release = os.release();
+  // WSL2 kernel strings typically contain "WSL2"
+  if (release.toLowerCase().includes('wsl2')) {
+    return true;
+  }
+  // Fallback: WSL2 uses kernel 5.x+, WSL1 reports 4.4.x
+  const [majorStr] = release.split('.');
+  const major = parseInt(majorStr ?? '0', 10);
+  return major >= 5;
+}
+
+/**
  * Detects whether we're running inside an existing container or sandbox.
  * Used to avoid nested sandboxing, which can fail or behave unexpectedly.
+ *
+ * WSL2 is NOT treated as a container — it has a real Linux kernel that
+ * supports bwrap, landlock, and seccomp. Only WSL1 is treated as a
+ * container environment because it cannot support user namespaces.
  */
 export function detectContainerEnvironment(): ContainerEnvironment {
   // Already in Gemini's own sandbox
@@ -69,12 +107,10 @@ export function detectContainerEnvironment(): ContainerEnvironment {
     return { detected: true, type: 'kubernetes', isGeminiSandbox: false };
   }
 
-  // WSL detection
-  if (
-    process.env['WSL_DISTRO_NAME'] ||
-    fs.existsSync('/proc/sys/fs/binfmt_misc/WSLInterop')
-  ) {
-    return { detected: true, type: 'wsl', isGeminiSandbox: false };
+  // WSL detection — only WSL1 is treated as a container environment.
+  // WSL2 has a real Linux kernel and supports all sandbox mechanisms.
+  if (isWSL() && !isWSL2()) {
+    return { detected: true, type: 'wsl1', isGeminiSandbox: false };
   }
 
   // systemd-nspawn detection

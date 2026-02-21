@@ -32,6 +32,7 @@ import {
   SANDBOX_PROXY_NAME,
   BUILTIN_SEATBELT_PROFILES,
   DEFAULT_BWRAP_PROFILE,
+  isWSL,
 } from './sandboxUtils.js';
 import { buildBwrapProfile, BUILTIN_BWRAP_PROFILES } from './bwrapProfiles.js';
 import { prepareSeccompFd, cleanupSeccomp } from './bwrap-seccomp.js';
@@ -1380,6 +1381,15 @@ async function startBwrapSandbox(
   const workdir = path.resolve(process.cwd());
   const home = homedir();
   const tmp = os.tmpdir();
+
+  // Warn on WSL when workspace is under /mnt/ (Windows-mounted filesystem)
+  if (isWSL() && workdir.startsWith('/mnt/')) {
+    debugLogger.warn(
+      `Workspace is under /mnt/ (Windows filesystem). ` +
+        `Bwrap bind mounts may have permission issues with NTFS paths. ` +
+        `For best results, use a Linux filesystem path (e.g. /home/${os.userInfo().username}/...).`,
+    );
+  }
 
   // Allow custom profiles from project settings
   let profile;

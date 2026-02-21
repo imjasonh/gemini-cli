@@ -40,7 +40,9 @@
 
 - `detectContainerEnvironment()` in `sandboxUtils.ts` checks multiple signals:
   `SANDBOX` env, `/.dockerenv`, `/run/.containerenv`, `KUBERNETES_SERVICE_HOST`,
-  `WSL_DISTRO_NAME`, `container=systemd-nspawn`, and cgroup contents
+  `container=systemd-nspawn`, and cgroup contents
+- WSL1 is treated as a container (can't sandbox); WSL2 is NOT (real Linux
+  kernel)
 - When `sandbox: true` and inside an external container, sandboxing is
   automatically skipped (outer container provides isolation)
 - Explicit sandbox commands (`GEMINI_SANDBOX=docker`) are still honored inside
@@ -48,6 +50,20 @@
 - `GEMINI_SANDBOX=force` overrides the detection and forces auto-detection
   inside the container
 - The check runs early in `getSandboxCommand()` before any command validation
+
+## WSL (Windows Subsystem for Linux) Support
+
+- `isWSL()` detects WSL via `WSL_DISTRO_NAME` env or
+  `/proc/sys/fs/binfmt_misc/WSLInterop`
+- `isWSL2()` distinguishes WSL2 from WSL1 using kernel version: WSL2 uses real
+  Linux kernel 5.x+, WSL1 uses NT translation at 4.4.x; the kernel string also
+  typically contains "WSL2"
+- WSL2 supports bwrap, landlock, and seccomp — all sandbox mechanisms work
+- WSL1 cannot support user namespaces, so sandboxing is skipped with a message
+- ContainerEnvironmentType uses `'wsl1'` (not `'wsl'`) to be explicit
+- Workspaces under `/mnt/` (Windows filesystem) may have NTFS permission issues
+  with bwrap bind mounts; a warning is logged recommending Linux filesystem
+  paths
 
 ## Bubblewrap (bwrap) Sandbox
 
@@ -77,3 +93,17 @@
 - Seatbelt uses host-side proxy; Docker uses container-based proxy; macOS
   Container and Bubblewrap use host-side proxy (like Seatbelt)
 - Test pattern: mock `spawn` with `EventEmitter`, emit `close` with timeout
+- `bwrap-seccomp.ts` has BPF seccomp filter generation and fd management
+
+## Seccomp BPF Filters
+
+- BPF seccomp filters are arrays of `sock_filter` structs (8 bytes each,
+  little-endian: u16 code, u8 jt, u8 jf, u32 k)
+- bwrap's `--seccomp FD` reads raw sock_filter array from the fd
+- To pass the filter: write to temp file, `fs.openSync()` for reading, pass fd
+  as extra entry in spawn's `stdio` array (position = fd number in child)
+- Key BPF opcodes: `0x20` (load word), `0x15` (jump if equal), `0x06` (return)
+- Architecture audit values: x86_64 = `0xC000003E`, aarch64 = `0xC00000B7`
+- Seccomp returns: ALLOW = `0x7FFF0000`, ERRNO|EPERM = `0x00050001`
+- Syscall numbers differ between x86_64 and aarch64; must use correct table
+- BWRAP_SECCOMP=off disables the filter for debugging/compatibility

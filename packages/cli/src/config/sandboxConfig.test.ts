@@ -394,6 +394,29 @@ describe('loadSandboxConfig', () => {
       const config = await loadSandboxConfig({ tools: { sandbox: true } }, {});
       expect(config).toBeUndefined();
     });
+
+    it('should skip sandboxing inside WSL1 with sandbox: true', async () => {
+      mockedDetectContainerEnvironment.mockReturnValue({
+        detected: true,
+        type: 'wsl1',
+        isGeminiSandbox: false,
+      });
+      const config = await loadSandboxConfig({}, { sandbox: true });
+      expect(config).toBeUndefined();
+    });
+
+    it('should allow sandboxing in WSL2 (not detected as container)', async () => {
+      // WSL2 is not reported as a container environment
+      mockedDetectContainerEnvironment.mockReturnValue({
+        detected: false,
+        type: 'none',
+        isGeminiSandbox: false,
+      });
+      mockedOsPlatform.mockReturnValue('linux');
+      mockedIsLandlockAvailable.mockResolvedValue(true);
+      const config = await loadSandboxConfig({}, { sandbox: true });
+      expect(config).toEqual({ command: 'landlock', image: 'default/image' });
+    });
   });
 
   describe('truthy/falsy sandbox values', () => {

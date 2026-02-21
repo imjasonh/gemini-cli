@@ -1357,9 +1357,12 @@ test-sandbox-wsl:
 
 ### Deliverables
 
-- [ ] WSL detection utilities
-- [ ] WSL2 version check
-- [ ] WSL-specific bwrap configuration adjustments
+- [x] WSL detection utilities (`isWSL()`, `isWSL2()`)
+- [x] WSL2 version check (kernel 5.x+ = WSL2, 4.4.x = WSL1)
+- [x] WSL-specific bwrap configuration adjustments (/mnt/ path warning)
+- [x] WSL2 not treated as container (sandboxing works normally)
+- [x] WSL1 treated as container (sandboxing skipped with message)
+- [x] Unit tests for WSL detection and sandbox config
 - [ ] GitHub Actions WSL testing workflow
 - [ ] Documentation for WSL users
 
@@ -1612,12 +1615,12 @@ args.push('--seccomp', '3'); // fd 3
 
 ### Deliverables
 
-- [ ] Seccomp profile definitions
-- [ ] BPF filter generation or pre-compiled filters
-- [ ] Integration with bwrap startup
-- [ ] Profile selection via environment variable
+- [x] Seccomp profile definitions
+- [x] BPF filter generation or pre-compiled filters
+- [x] Integration with bwrap startup
+- [x] Profile selection via environment variable
 - [ ] Documentation of blocked syscalls
-- [ ] Unit and integration tests
+- [x] Unit and integration tests
 
 ### Estimated Effort
 

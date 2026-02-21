@@ -19,6 +19,8 @@ import {
   isMacOSContainerAvailable,
   isBwrapAvailable,
   isLandlockAvailable,
+  isWSL,
+  isWSL2,
 } from './sandboxUtils.js';
 
 vi.mock('node:os');
@@ -111,13 +113,33 @@ describe('sandboxUtils', () => {
       });
     });
 
-    it('should detect WSL via WSL_DISTRO_NAME', () => {
+    it('should detect WSL1 as container via WSL_DISTRO_NAME', () => {
       process.env['WSL_DISTRO_NAME'] = 'Ubuntu';
+      vi.mocked(os.platform).mockReturnValue('linux');
+      vi.mocked(os.release).mockReturnValue('4.4.0-19041-Microsoft');
       vi.mocked(fs.existsSync).mockReturnValue(false);
       const result = detectContainerEnvironment();
       expect(result).toEqual({
         detected: true,
-        type: 'wsl',
+        type: 'wsl1',
+        isGeminiSandbox: false,
+      });
+    });
+
+    it('should NOT detect WSL2 as container (WSL2 supports sandboxing)', () => {
+      process.env['WSL_DISTRO_NAME'] = 'Ubuntu';
+      vi.mocked(os.platform).mockReturnValue('linux');
+      vi.mocked(os.release).mockReturnValue(
+        '5.15.153.1-microsoft-standard-WSL2',
+      );
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      vi.mocked(fs.readFileSync).mockImplementation(() => {
+        throw new Error('ENOENT');
+      });
+      const result = detectContainerEnvironment();
+      expect(result).toEqual({
+        detected: false,
+        type: 'none',
         isGeminiSandbox: false,
       });
     });
@@ -357,6 +379,68 @@ describe('sandboxUtils', () => {
     it('should return true when /proc/sys/kernel/unprivileged_userns_clone does not exist', async () => {
       mockedReadFile.mockRejectedValue({ code: 'ENOENT' });
       expect(await isBwrapAvailable()).toBe(true);
+    });
+  });
+
+  describe('isWSL', () => {
+    it('should return false on non-Linux', () => {
+      vi.mocked(os.platform).mockReturnValue('darwin');
+      expect(isWSL()).toBe(false);
+    });
+
+    it('should return true when WSL_DISTRO_NAME is set', () => {
+      vi.mocked(os.platform).mockReturnValue('linux');
+      process.env['WSL_DISTRO_NAME'] = 'Ubuntu';
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      expect(isWSL()).toBe(true);
+    });
+
+    it('should return true when WSLInterop exists', () => {
+      vi.mocked(os.platform).mockReturnValue('linux');
+      vi.mocked(fs.existsSync).mockImplementation(
+        (p) => p === '/proc/sys/fs/binfmt_misc/WSLInterop',
+      );
+      expect(isWSL()).toBe(true);
+    });
+
+    it('should return false on plain Linux', () => {
+      vi.mocked(os.platform).mockReturnValue('linux');
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      expect(isWSL()).toBe(false);
+    });
+  });
+
+  describe('isWSL2', () => {
+    it('should return false when not in WSL', () => {
+      vi.mocked(os.platform).mockReturnValue('linux');
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      expect(isWSL2()).toBe(false);
+    });
+
+    it('should return true for WSL2 kernel string', () => {
+      vi.mocked(os.platform).mockReturnValue('linux');
+      process.env['WSL_DISTRO_NAME'] = 'Ubuntu';
+      vi.mocked(os.release).mockReturnValue(
+        '5.15.153.1-microsoft-standard-WSL2',
+      );
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      expect(isWSL2()).toBe(true);
+    });
+
+    it('should return true for WSL2 based on kernel version >= 5', () => {
+      vi.mocked(os.platform).mockReturnValue('linux');
+      process.env['WSL_DISTRO_NAME'] = 'Ubuntu';
+      vi.mocked(os.release).mockReturnValue('6.1.0-microsoft-standard');
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      expect(isWSL2()).toBe(true);
+    });
+
+    it('should return false for WSL1 (kernel 4.4.x)', () => {
+      vi.mocked(os.platform).mockReturnValue('linux');
+      process.env['WSL_DISTRO_NAME'] = 'Ubuntu';
+      vi.mocked(os.release).mockReturnValue('4.4.0-19041-Microsoft');
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+      expect(isWSL2()).toBe(false);
     });
   });
 
