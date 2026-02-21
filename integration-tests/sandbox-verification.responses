@@ -1,0 +1,1 @@
+{"method":"generateContentStream","response":[{"candidates":[{"content":{"parts":[{"text":"Checking sandbox environment..."},{"functionCall":{"name":"run_shell_command","args":{"command":"env"}}}]},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":10,"totalTokenCount":20}}]}

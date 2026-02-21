@@ -495,6 +495,9 @@ export async function start_sandbox(
     }
 
     // copy GOOGLE_GEMINI_BASE_URL and GOOGLE_VERTEX_BASE_URL
+    // Set SANDBOX env var to docker or podman
+    args.push('--env', `SANDBOX=${config.command}`);
+
     if (process.env['GOOGLE_GEMINI_BASE_URL']) {
       args.push(
         '--env',
@@ -1285,7 +1288,7 @@ async function startMacOSContainerSandbox(
   }
 
   // SANDBOX env var
-  args.push('-e', `SANDBOX=${containerName}`);
+  args.push('-e', 'SANDBOX=macos-container');
 
   // Proxy support (host-side proxy, like Seatbelt)
   const proxyCommand = process.env['GEMINI_SANDBOX_PROXY_COMMAND'];

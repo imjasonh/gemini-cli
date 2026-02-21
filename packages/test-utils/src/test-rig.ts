@@ -542,6 +542,9 @@ export class TestRig {
         key !== 'GEMINI_DEBUG' &&
         key !== 'GEMINI_CLI_TEST_VAR' &&
         key !== 'GEMINI_CLI_INTEGRATION_TEST' &&
+        key !== 'GEMINI_SANDBOX' &&
+        key !== 'GEMINI_TELEMETRY_ENABLED' &&
+        key !== 'GEMINI_TELEMETRY_OUTFILE' &&
         !key.startsWith('GEMINI_CLI_ACTIVITY_LOG')
       ) {
         delete cleanEnv[key];
