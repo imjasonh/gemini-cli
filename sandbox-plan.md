@@ -618,17 +618,20 @@ Extend existing test files:
 
 ### 4.4 CI Runner Requirements
 
-| Sandbox Mode      | CI Runner       | Notes                       |
-| ----------------- | --------------- | --------------------------- |
-| `sandbox-exec`    | `macos-latest`  | Works on all macOS versions |
-| `macos-container` | `macos-15`      | Requires macOS 15+ runner   |
-| `docker`          | `ubuntu-latest` | Docker pre-installed        |
-| `podman`          | `ubuntu-latest` | Need to install podman      |
-| `bwrap`           | `ubuntu-latest` | Need to install bubblewrap  |
+| Sandbox Mode      | CI Runner       | Notes                                            |
+| ----------------- | --------------- | ------------------------------------------------ |
+| `sandbox-exec`    | `macos-latest`  | Works on all macOS versions                      |
+| `macos-container` | N/A             | Cannot run on GHA (requires nested VZ)           |
+| `docker`          | `ubuntu-latest` | Docker pre-installed                             |
+| `podman`          | `ubuntu-latest` | Need to install podman                           |
+| `bwrap`           | `ubuntu-latest` | Need to install bubblewrap + enable user ns      |
+| `landlock`        | `ubuntu-latest` | Need to build landlock-helper + mount securityfs |
 
-**Note**: GitHub Actions `macos-15` runners are available (Apple Silicon). We
-use these runners for `macos-container` tests. The workflow installs the
-`container` CLI and initializes the system service before running tests.
+**Note**: `macos-container` requires Apple's Virtualization.framework, which is
+unavailable on GHA macOS runners (they are ARM64 VMs that don't support nested
+VZ). Both `container build` and `container run` fail. The macos-container
+sandbox works on bare-metal Apple Silicon and should be tested locally only. See
+https://github.com/actions/runner-images/issues/8465.
 
 ### Deliverables
 
@@ -703,10 +706,10 @@ Update `--sandbox` flag help text to mention new options.
 
 ### Deliverables
 
-- [ ] Comprehensive sandbox documentation
-- [ ] Comparison table and decision guide
-- [ ] Improved error messages
-- [ ] Updated CLI help text
+- [x] Comprehensive sandbox documentation
+- [x] Comparison table and decision guide
+- [x] Improved error messages
+- [x] Updated CLI help text
 - [ ] CHANGELOG entry
 
 ### Estimated Effort
@@ -1501,10 +1504,11 @@ Timeline**: 6-12 months across multiple releases
 3. **Startup time budget**: <3 seconds added latency is acceptable. Document
    actual performance in release notes.
 
-4. **GitHub Actions macos-15 availability**: **Confirmed available.** GitHub
-   Actions provides `macos-15` runners running macOS 15.7.3. We can use
-   `runs-on: macos-15` directly. Additionally, `macos-latest` may also resolve
-   to macOS 15 in some cases.
+4. **GitHub Actions macos-container testing**: **Not possible on GHA.** GHA
+   macOS runners are ARM64 VMs without nested Virtualization.framework support.
+   Both `container build` and `container run` fail. The macos-container sandbox
+   must be tested locally on bare-metal Apple Silicon. The `sandbox-exec` leg
+   uses `macos-latest` and works fine.
 
 5. **Sandbox escape reporting**: Covered by existing vulnerability reporting
    programs. No implementation needed in this work.

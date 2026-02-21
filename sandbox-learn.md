@@ -135,3 +135,78 @@
 - **Validation**: Added `integration-tests/sandbox-verification.test.ts` to
   explicitly verify that the `SANDBOX` environment variable is present inside
   the executing shell, confirming that the sandbox is active.
+
+## CI / GitHub Actions Testing
+
+### Workflow Structure
+
+- `.github/workflows/test-sandbox.yml` runs a matrix of sandbox legs: bwrap,
+  landlock, sandbox-exec, docker (4 legs)
+- Each leg runs unit tests + a sandbox verification integration test
+- The verification test uses fake API responses (no real `GEMINI_API_KEY`
+  needed), but the CLI still validates the key at startup — set
+  `GEMINI_API_KEY=fake-key-for-sandbox-test`
+- Use `npm run test:integration:sandbox:<mode> -- sandbox-verification.test.ts`
+  to run only the verification test per sandbox mode
+
+### macOS Container Cannot Run on GHA
+
+- Apple's `container` CLI requires Virtualization.framework (VZ) for both
+  `container build` and `container run`
+- GHA macOS ARM64 runners are VMs that don't support nested VZ
+  (https://github.com/actions/runner-images/issues/8465)
+- `container system start` succeeds (daemon only), but any operation requiring a
+  VM fails with `VZErrorDomain Code=2 "Virtualization is not available"`
+- Confirmed in CI runs 22261349562 and 22261620762: both `container build` and
+  `container run` fail
+- macos-container works on bare-metal Apple Silicon — test locally only
+- The `sandbox_command.js` and `build_sandbox.js` changes for macos-container
+  support are retained for local development
+
+### sandbox_command.js Binary Mapping
+
+- `sandbox_command.js` validates the sandbox binary exists via `command -v`
+- `GEMINI_SANDBOX=macos-container` checks for a binary called `macos-container`,
+  but the actual binary is `container`
+- Fixed with a `binaryForMode` mapping: `{ 'macos-container': 'container' }`
+- Other modes (docker, podman, bwrap, sandbox-exec) match their binary names
+
+### build_sandbox.js and container build
+
+- `build_sandbox.js` uses `${sandboxCommand} build ...` for Docker/Podman
+- Apple's container CLI uses `container build` (not `container image build`)
+  with the same flags (`-t`, `-f`, `--build-arg`)
+- Added a `sandboxCommand === 'macos-container'` branch to use `container build`
+- Also skip `image prune` for macos-container (not a valid container CLI
+  command)
+- The npm script `test:integration:sandbox:macos-container` now includes
+  `build:sandbox` (matching the docker script)
+
+### bwrap/landlock CLI Entry Script Path
+
+- When running from a project checkout (e.g. CI), the CLI entry script
+  (`bundle/gemini.js`) lives outside the standard system dirs and workdir
+- bwrap: added `--ro-bind` for the entry script's directory
+- landlock: added `--rx` for the entry script's directory
+- Without this, the sandbox blocks access to its own entry point
+
+### Landlock CI Setup
+
+- Ubuntu runners have Landlock LSM loaded but `/sys/kernel/security` may not be
+  mounted — add `sudo mount -t securityfs securityfs /sys/kernel/security`
+- Verify LSM availability by reading `/sys/kernel/security/lsm` and grepping for
+  `landlock`
+- Build and install `landlock-helper` from `packages/cli/native/` before tests
+
+### bwrap CI Setup
+
+- Ubuntu 24.04 restricts unprivileged user namespaces via AppArmor
+- Enable with `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`
+- Install bubblewrap: `sudo apt-get install -y bubblewrap`
+
+### Integration Test Verification Approach
+
+- Fake responses don't echo tool output to stdout, so checking for env vars in
+  stdout doesn't work
+- Use `rig.waitForToolCall('run_shell_command')` to verify the tool was called
+  inside the sandbox — this checks telemetry logs, not stdout
