@@ -32,7 +32,7 @@ jobs:
           - sandbox: 'sandbox-exec'
             os: 'macos-latest'
           - sandbox: 'macos-container'
-            os: 'macos-15'
+            os: 'macos-26'
           - sandbox: 'docker'
             os: 'ubuntu-latest'
 
@@ -45,16 +45,58 @@ jobs:
         with:
           node-version: '20.x'
 
+      - name: 'Enable unprivileged user namespaces (bwrap)'
+        if: "matrix.sandbox == 'bwrap'"
+        run: |
+          # Ubuntu 24.04 restricts unprivileged user namespaces via AppArmor.
+          # bwrap needs them to set up uid/gid maps.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null \
+            || sudo sysctl -w kernel.unprivileged_userns_clone=1 2>/dev/null \
+            || { echo "::error::Could not enable unprivileged user namespaces"; exit 1; }
+
       - name: 'Install bubblewrap'
         if: "matrix.sandbox == 'bwrap'"
         run: 'sudo apt-get install -y bubblewrap'
 
-      - name: 'Build landlock-helper'
+      - name: 'Set up Landlock'
         if: "matrix.sandbox == 'landlock'"
         run: |
+          # Build and install landlock-helper
           cd packages/cli/native
           make
           sudo install -m 755 landlock-helper /usr/local/bin/landlock-helper
+
+          # Ensure securityfs is mounted
+          if [ ! -d /sys/kernel/security ]; then
+            sudo mount -t securityfs securityfs /sys/kernel/security
+          fi
+
+          # Diagnostics
+          echo "Kernel: $(uname -r)"
+          echo "LSMs: $(cat /sys/kernel/security/lsm 2>/dev/null || echo 'NOT AVAILABLE')"
+          echo "Landlock dir: $(ls -la /sys/kernel/security/landlock/ 2>&1 || echo 'NOT FOUND')"
+
+          # Verify Landlock is actually available
+          if [ ! -d /sys/kernel/security/landlock ]; then
+            echo "::error::Landlock LSM is not available on this runner (kernel $(uname -r)). Check LSM boot parameters."
+            exit 1
+          fi
+
+      - name: 'Install macOS container CLI'
+        if: "matrix.sandbox == 'macos-container'"
+        run: |
+          # Install from the signed pkg on GitHub releases (official method).
+          curl -fsSL -o /tmp/container.pkg \
+            https://github.com/apple/container/releases/download/0.9.0/container-installer-signed.pkg
+          sudo installer -pkg /tmp/container.pkg -target /
+          rm /tmp/container.pkg
+
+          # Verify installation
+          if ! command -v container &>/dev/null; then
+            echo "::error::Failed to install Apple container CLI"
+            exit 1
+          fi
+          container --version
 
       - name: 'Install dependencies'
         run: 'npm ci'
