@@ -121,3 +121,17 @@
   - Also cleans `packages/cli/dist` via standard cleanup
 - `.gitignore` includes `packages/cli/native/landlock-helper` to prevent
   checking in binaries
+
+## Test Environment Sanitization
+
+- The integration test rig (`packages/test-utils/src/test-rig.ts`) actively
+  sanitizes environment variables, stripping most `GEMINI_*` variables to ensure
+  test isolation.
+- This previously caused `GEMINI_SANDBOX` and `GEMINI_TELEMETRY_*` variables to
+  be removed, meaning tests were running unsandboxed (default behavior) even
+  when configured otherwise in CI.
+- **Fix**: The environment variable allowlist in `TestRig` must include
+  `GEMINI_SANDBOX`, `GEMINI_TELEMETRY_ENABLED`, and `GEMINI_TELEMETRY_OUTFILE`.
+- **Validation**: Added `integration-tests/sandbox-verification.test.ts` to
+  explicitly verify that the `SANDBOX` environment variable is present inside
+  the executing shell, confirming that the sandbox is active.
