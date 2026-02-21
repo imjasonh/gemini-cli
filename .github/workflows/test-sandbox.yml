@@ -18,15 +18,27 @@ permissions:
   contents: 'read'
 
 jobs:
-  sandbox-linux:
-    name: 'Sandbox (${{ matrix.sandbox }}) - Linux'
-    runs-on: 'ubuntu-latest'
+  test-sandbox:
+    name: 'Sandbox (${{ matrix.sandbox }})'
+    runs-on: '${{ matrix.os }}'
+    continue-on-error: ${{ matrix.allow_failure }}
     strategy:
       fail-fast: false
       matrix:
-        sandbox:
-          - 'bwrap'
-          - 'landlock'
+        include:
+          - sandbox: 'bwrap'
+            os: 'ubuntu-latest'
+            allow_failure: false
+          - sandbox: 'landlock'
+            os: 'ubuntu-latest'
+            allow_failure: false
+          - sandbox: 'sandbox-exec'
+            os: 'macos-latest'
+            allow_failure: true
+          - sandbox: 'macos-container'
+            os: 'macos-15'
+            allow_failure: true
+
     steps:
       - name: 'Checkout'
         uses: 'actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955' # ratchet:actions/checkout@v5
@@ -53,7 +65,8 @@ jobs:
       - name: 'Build project'
         run: 'npm run build'
 
-      - name: 'Run sandbox unit tests'
+      - name: 'Run sandbox unit tests (Linux)'
+        if: "runner.os == 'Linux'"
         run: |
           npx vitest run \
             packages/cli/src/utils/sandbox.test.ts \
@@ -62,34 +75,8 @@ jobs:
             packages/cli/src/utils/bwrap-seccomp.test.ts \
             packages/cli/src/utils/landlockProfiles.test.ts
 
-      - name: 'Run integration tests'
-        if: "github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)"
-        env:
-          GEMINI_API_KEY: '${{ secrets.GEMINI_API_KEY }}'
-          KEEP_OUTPUT: 'true'
-          VERBOSE: 'true'
-        run: 'npm run test:integration:sandbox:${{ matrix.sandbox }}'
-
-  sandbox-macos:
-    name: 'Sandbox (sandbox-exec) - macOS'
-    runs-on: 'macos-latest'
-    continue-on-error: true
-    steps:
-      - name: 'Checkout'
-        uses: 'actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955' # ratchet:actions/checkout@v5
-
-      - name: 'Set up Node.js 20.x'
-        uses: 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020' # ratchet:actions-node@v4
-        with:
-          node-version: '20.x'
-
-      - name: 'Install dependencies'
-        run: 'npm ci'
-
-      - name: 'Build project'
-        run: 'npm run build'
-
-      - name: 'Run sandbox unit tests'
+      - name: 'Run sandbox unit tests (macOS)'
+        if: "runner.os == 'macOS' && matrix.sandbox != 'macos-container'"
         run: |
           npx vitest run \
             packages/cli/src/utils/sandbox.test.ts \
@@ -101,69 +88,18 @@ jobs:
           GEMINI_API_KEY: '${{ secrets.GEMINI_API_KEY }}'
           KEEP_OUTPUT: 'true'
           VERBOSE: 'true'
-        run: 'npm run test:integration:sandbox:sandbox-exec'
-
-  sandbox-macos-container:
-    name: 'Sandbox (macos-container) - macOS 15'
-    runs-on: 'macos-15'
-    continue-on-error: true
-    steps:
-      - name: 'Checkout'
-        uses: 'actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955' # ratchet:actions/checkout@v5
-
-      - name: 'Set up Node.js 20.x'
-        uses: 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020' # ratchet:actions-node@v4
-        with:
-          node-version: '20.x'
-
-      - name: 'Install container CLI'
-        env:
-          GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
-        run: |
-          if ! command -v container &> /dev/null; then
-            echo "Installing container CLI..."
-            gh release download --repo apple/container --pattern '*.pkg' --output container.pkg || echo "Failed to download container pkg"
-            if [ -f container.pkg ]; then
-              sudo installer -pkg container.pkg -target /
-              rm container.pkg
-            fi
-          else
-            echo "container CLI already installed"
-          fi
-          if command -v container &> /dev/null; then
-             echo "Starting container system..."
-             container system start || echo "Failed to start container system"
-          fi
-
-      - name: 'Install dependencies'
-        run: 'npm ci'
-
-      - name: 'Build project'
-        run: 'npm run build'
-
-      - name: 'Run integration tests'
-        if: "github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)"
-        env:
-          GEMINI_API_KEY: '${{ secrets.GEMINI_API_KEY }}'
-          KEEP_OUTPUT: 'true'
-          VERBOSE: 'true'
-        run: 'npm run test:integration:sandbox:macos-container'
+        run: 'npm run test:integration:sandbox:${{ matrix.sandbox }}'
 
   sandbox-summary:
-    name: 'Sandbox Tests'
+    name: 'Sandbox Tests Summary'
     if: 'always()'
-    needs:
-      - 'sandbox-linux'
-      - 'sandbox-macos'
-      - 'sandbox-macos-container'
+    needs: 'test-sandbox'
     runs-on: 'ubuntu-latest'
     steps:
       - name: 'Check results'
         run: |
-          if [[ "${{ needs.sandbox-linux.result }}" != "success" ]]; then
-            echo "Linux sandbox tests failed."
+          if [[ "${{ needs.test-sandbox.result }}" != "success" ]]; then
+            echo "One or more required sandbox tests failed."
             exit 1
           fi
-          echo "Sandbox tests passed."
-          echo "macOS (Seatbelt): ${{ needs.sandbox-macos.result }}"
-          echo "macOS (Container): ${{ needs.sandbox-macos-container.result }}"
+          echo "All required sandbox tests passed."
