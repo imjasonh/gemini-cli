@@ -21,6 +21,21 @@
   require macOS 26
 - One VM per container = true kernel isolation (strongest security model)
 
+## Multi-arch Image Builds
+
+- CI uses `docker buildx build --platform linux/amd64,linux/arm64 --push` to
+  produce a multi-arch manifest in one step (can't `docker push` a local
+  multi-arch image)
+- Requires `docker/setup-qemu-action@v3` for cross-platform emulation in CI
+- `build_sandbox.js --pack-only` packs npm tarballs without running docker
+  build, so CI can delegate the build to `docker buildx`
+- `macOSContainerImageArch()` inspects the image via
+  `container image inspect --format json` to determine available architectures
+- When the image has an arm64 variant, the container runs natively (no
+  `--rosetta`); amd64-only images get `--rosetta --arch amd64`
+- On detection failure, falls back to `--rosetta` to let the container CLI
+  decide
+
 ## Codebase Architecture
 
 - `sandbox.ts` `start_sandbox()` routes by `config.command`:

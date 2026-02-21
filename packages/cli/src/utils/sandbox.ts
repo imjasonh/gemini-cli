@@ -969,6 +969,62 @@ async function ensureMacOSContainerImage(
   return false;
 }
 
+/**
+ * Returns the set of architectures available for the given image
+ * by running `container image inspect` and parsing the JSON output.
+ * Returns null on any failure so callers can fall back gracefully.
+ */
+export async function macOSContainerImageArch(
+  image: string,
+): Promise<Set<string> | null> {
+  try {
+    const { stdout } = await execAsync(
+      `container image inspect ${image} --format json`,
+    );
+    const data: unknown = JSON.parse(stdout);
+
+    // The inspect output may be an object or an array of objects.
+    // Each object may have a top-level "Architecture" field, or
+    // a "Manifests" array with per-platform entries.
+    const items: unknown[] = Array.isArray(data) ? data : [data];
+    const archs = new Set<string>();
+
+    for (const item of items) {
+      if (typeof item !== 'object' || item === null) continue;
+
+      // Single-arch image: top-level Architecture field
+      if ('Architecture' in item && typeof item.Architecture === 'string') {
+        archs.add(item.Architecture);
+      }
+      // Multi-arch manifest list
+      if ('Manifests' in item && Array.isArray(item.Manifests)) {
+        const manifests: unknown[] = item.Manifests;
+        for (const m of manifests) {
+          if (typeof m !== 'object' || m === null) continue;
+          const platform =
+            ('Platform' in m ? m.Platform : undefined) ??
+            ('platform' in m ? m.platform : undefined);
+          if (typeof platform !== 'object' || platform === null) continue;
+          const arch =
+            ('Architecture' in platform ? platform.Architecture : undefined) ??
+            ('architecture' in platform ? platform.architecture : undefined);
+          if (typeof arch === 'string') {
+            archs.add(arch);
+          }
+        }
+      }
+    }
+
+    if (archs.size === 0) {
+      return null;
+    }
+    return archs;
+  } catch {
+    debugLogger.warn(`Failed to inspect image arch for ${image}`);
+    return null;
+  }
+}
+
 async function startMacOSContainerSandbox(
   config: SandboxConfig,
   nodeArgs: string[],
@@ -1014,8 +1070,20 @@ async function startMacOSContainerSandbox(
     args.push('-t');
   }
 
-  // Enable Rosetta for x86_64 image compatibility on Apple Silicon
-  args.push('--rosetta');
+  // Determine Rosetta / arch flags based on image architectures.
+  // arm64-native images need no extra flags; amd64-only images need
+  // --rosetta --arch amd64; on detection failure fall back to --rosetta.
+  const imageArchs = await macOSContainerImageArch(image);
+  if (imageArchs === null) {
+    // Detection failed — let the container CLI decide
+    debugLogger.log('Image arch detection failed, falling back to --rosetta');
+    args.push('--rosetta');
+  } else if (imageArchs.has('arm64') || imageArchs.has('aarch64')) {
+    debugLogger.log('Image has arm64 variant, running natively');
+  } else {
+    debugLogger.log('Image is amd64-only, using --rosetta --arch amd64');
+    args.push('--rosetta', '--arch', 'amd64');
+  }
 
   // Mount working directory
   args.push('--volume', `${workdir}:${workdir}`);

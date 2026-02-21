@@ -28,6 +28,11 @@ vi.mock('./sandboxUtils.js', async (importOriginal) => {
 vi.mock('node:child_process');
 vi.mock('node:os');
 vi.mock('node:fs');
+// Default image inspect response; tests can override via mockImageInspectResponse
+let mockImageInspectResponse = JSON.stringify({
+  Architecture: 'amd64',
+});
+
 vi.mock('node:util', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:util')>();
   return {
@@ -46,6 +51,9 @@ vi.mock('node:util', async (importOriginal) => {
           }
           if (cmd.includes('ps -a --format')) {
             return { stdout: 'existing-container', stderr: '' };
+          }
+          if (cmd.includes('container image inspect')) {
+            return { stdout: mockImageInspectResponse, stderr: '' };
           }
           return { stdout: '', stderr: '' };
         };
@@ -92,6 +100,7 @@ describe('sandbox', () => {
     vi.clearAllMocks();
     process.env = { ...originalEnv };
     process.argv = [...originalArgv];
+    mockImageInspectResponse = JSON.stringify({ Architecture: 'amd64' });
     mockProcessIn = {
       pause: vi.fn(),
       resume: vi.fn(),
@@ -475,8 +484,11 @@ describe('sandbox', () => {
     });
 
     describe('macOS Container sandbox', () => {
-      it('should route macos-container to the container CLI', async () => {
+      it('should route macos-container to the container CLI with amd64-only image', async () => {
         vi.mocked(os.platform).mockReturnValue('darwin');
+        mockImageInspectResponse = JSON.stringify({
+          Architecture: 'amd64',
+        });
         const config: SandboxConfig = {
           command: 'macos-container',
           image: 'some-image',
@@ -518,12 +530,75 @@ describe('sandbox', () => {
         const promise = start_sandbox(config, [], undefined, ['arg1']);
         await expect(promise).resolves.toBe(0);
 
-        // Verify container CLI was used (not docker)
+        // amd64-only image should use --rosetta --arch amd64
         expect(spawn).toHaveBeenCalledWith(
           'container',
-          expect.arrayContaining(['run', '-i', '--rm', '--rosetta']),
+          expect.arrayContaining([
+            'run',
+            '-i',
+            '--rm',
+            '--rosetta',
+            '--arch',
+            'amd64',
+          ]),
           expect.objectContaining({ stdio: 'inherit' }),
         );
+      });
+
+      it('should run natively with arm64 image (no --rosetta)', async () => {
+        vi.mocked(os.platform).mockReturnValue('darwin');
+        mockImageInspectResponse = JSON.stringify({
+          Manifests: [
+            { Platform: { Architecture: 'amd64' } },
+            { Platform: { Architecture: 'arm64' } },
+          ],
+        });
+        const config: SandboxConfig = {
+          command: 'macos-container',
+          image: 'some-image',
+        };
+
+        interface MockProcessWithStdout extends EventEmitter {
+          stdout: EventEmitter;
+        }
+        const mockImageListProcess =
+          new EventEmitter() as MockProcessWithStdout;
+        mockImageListProcess.stdout = new EventEmitter();
+        vi.mocked(spawn).mockImplementationOnce(() => {
+          setTimeout(() => {
+            mockImageListProcess.stdout.emit(
+              'data',
+              Buffer.from('some-image\n'),
+            );
+            mockImageListProcess.emit('close', 0);
+          }, 1);
+          return mockImageListProcess as unknown as ReturnType<typeof spawn>;
+        });
+
+        const mockSpawnProcess = new EventEmitter() as unknown as ReturnType<
+          typeof spawn
+        >;
+        mockSpawnProcess.on = vi.fn().mockImplementation((event, cb) => {
+          if (event === 'close') {
+            setTimeout(() => cb(0), 10);
+          }
+          return mockSpawnProcess;
+        });
+        vi.mocked(spawn).mockImplementationOnce(() => mockSpawnProcess);
+
+        const promise = start_sandbox(config, [], undefined, ['arg1']);
+        await expect(promise).resolves.toBe(0);
+
+        // arm64-capable image should NOT have --rosetta
+        const runCall = vi
+          .mocked(spawn)
+          .mock.calls.find(
+            (call) =>
+              call[0] === 'container' && (call[1] as string[])?.[0] === 'run',
+          );
+        expect(runCall).toBeDefined();
+        const runArgs = runCall![1] as string[];
+        expect(runArgs).not.toContain('--rosetta');
       });
 
       it('should throw FatalSandboxError if BUILD_SANDBOX is set', async () => {

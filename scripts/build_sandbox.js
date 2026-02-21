@@ -50,6 +50,12 @@ const argv = yargs(hideBin(process.argv))
     default: cliPkgJson.config.sandboxImageUri,
     description: 'use <image> name for custom image',
   })
+  .option('p', {
+    alias: 'pack-only',
+    type: 'boolean',
+    default: false,
+    description: 'exit after npm pack (skip docker build)',
+  })
   .option('output-file', {
     type: 'string',
     description:
@@ -122,6 +128,11 @@ chmodSync(
   join(corePackageDir, 'dist', `google-gemini-cli-core-${packageVersion}.tgz`),
   0o755,
 );
+
+if (argv.p) {
+  console.log('--pack-only: skipping docker build');
+  process.exit(0);
+}
 
 const buildStdout = process.env.VERBOSE ? 'inherit' : 'ignore';
 
