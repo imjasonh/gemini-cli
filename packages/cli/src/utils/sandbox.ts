@@ -34,6 +34,7 @@ import {
   DEFAULT_BWRAP_PROFILE,
 } from './sandboxUtils.js';
 import { buildBwrapProfile, BUILTIN_BWRAP_PROFILES } from './bwrapProfiles.js';
+import { prepareSeccompFd, cleanupSeccomp } from './bwrap-seccomp.js';
 
 const execAsync = promisify(exec);
 
@@ -1394,6 +1395,12 @@ async function startBwrapSandbox(
 
   debugLogger.log(`using bubblewrap (profile: ${profileName}) ...`);
 
+  // Prepare seccomp filter (disabled with BWRAP_SECCOMP=off)
+  const seccomp = prepareSeccompFd();
+  if (seccomp) {
+    debugLogger.log('seccomp filter enabled');
+  }
+
   const args: string[] = [
     // Namespace isolation
     '--unshare-user',
@@ -1414,6 +1421,11 @@ async function startBwrapSandbox(
     '--tmpfs',
     '/run',
   ];
+
+  // Seccomp filter via fd 3
+  if (seccomp) {
+    args.push('--seccomp', '3');
+  }
 
   // Network isolation
   if (!profile.shareNetwork) {
@@ -1549,9 +1561,13 @@ async function startBwrapSandbox(
   // The command to run inside bwrap
   args.push('--', ...cliArgs);
 
-  // Spawn bwrap
+  // Spawn bwrap (pass seccomp filter as fd 3 if enabled)
   process.stdin.pause();
-  const sandboxProcess = spawn('bwrap', args, { stdio: 'inherit' });
+  const stdio: Array<'inherit' | number> = ['inherit', 'inherit', 'inherit'];
+  if (seccomp) {
+    stdio.push(seccomp.fd);
+  }
+  const sandboxProcess = spawn('bwrap', args, { stdio });
 
   // Register proxy close handler after sandbox is spawned
   if (proxyProcess) {
@@ -1572,6 +1588,9 @@ async function startBwrapSandbox(
     });
     sandboxProcess.on('close', (code, signal) => {
       process.stdin.resume();
+      if (seccomp) {
+        cleanupSeccomp(seccomp);
+      }
       if (code !== 0 && code !== null) {
         debugLogger.log(
           `Bubblewrap sandbox exited with code: ${code}, signal: ${signal}`,

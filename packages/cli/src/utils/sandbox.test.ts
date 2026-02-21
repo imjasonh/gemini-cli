@@ -12,9 +12,18 @@ import { start_sandbox } from './sandbox.js';
 import { FatalSandboxError, type SandboxConfig } from '@google/gemini-cli-core';
 import { EventEmitter } from 'node:events';
 
-const { mockedHomedir, mockedGetContainerPath } = vi.hoisted(() => ({
+const {
+  mockedHomedir,
+  mockedGetContainerPath,
+  mockedPrepareSeccompFd,
+  mockedCleanupSeccomp,
+} = vi.hoisted(() => ({
   mockedHomedir: vi.fn().mockReturnValue('/home/user'),
   mockedGetContainerPath: vi.fn().mockImplementation((p: string) => p),
+  mockedPrepareSeccompFd: vi
+    .fn()
+    .mockReturnValue({ fd: 99, path: '/tmp/bwrap-seccomp-test.bpf' }),
+  mockedCleanupSeccomp: vi.fn(),
 }));
 
 vi.mock('./sandboxUtils.js', async (importOriginal) => {
@@ -24,6 +33,11 @@ vi.mock('./sandboxUtils.js', async (importOriginal) => {
     getContainerPath: mockedGetContainerPath,
   };
 });
+
+vi.mock('./bwrap-seccomp.js', () => ({
+  prepareSeccompFd: mockedPrepareSeccompFd,
+  cleanupSeccomp: mockedCleanupSeccomp,
+}));
 
 vi.mock('node:child_process');
 vi.mock('node:os');
@@ -855,8 +869,111 @@ describe('sandbox', () => {
             '--proc',
             '/proc',
           ]),
-          expect.objectContaining({ stdio: 'inherit' }),
+          expect.objectContaining({
+            stdio: ['inherit', 'inherit', 'inherit', 99],
+          }),
         );
+      });
+
+      it('should include --seccomp arg when seccomp is enabled', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = {
+          command: 'bwrap',
+          image: 'some-image',
+        };
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, ['gemini']);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        expect(spawn).toHaveBeenCalledWith(
+          'bwrap',
+          expect.arrayContaining(['--seccomp', '3']),
+          expect.any(Object),
+        );
+      });
+
+      it('should not include --seccomp when seccomp is disabled', async () => {
+        mockedPrepareSeccompFd.mockReturnValueOnce(null);
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = {
+          command: 'bwrap',
+          image: 'some-image',
+        };
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, ['gemini']);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        const bwrapArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+        expect(bwrapArgs).not.toContain('--seccomp');
+        // Should use simple inherit array without extra fd
+        expect(spawn).toHaveBeenCalledWith(
+          'bwrap',
+          expect.any(Array),
+          expect.objectContaining({
+            stdio: ['inherit', 'inherit', 'inherit'],
+          }),
+        );
+      });
+
+      it('should cleanup seccomp on process close', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = {
+          command: 'bwrap',
+          image: 'some-image',
+        };
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, ['gemini']);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        expect(mockedCleanupSeccomp).toHaveBeenCalledWith({
+          fd: 99,
+          path: '/tmp/bwrap-seccomp-test.bpf',
+        });
       });
 
       it('should set SANDBOX=bwrap env var', async () => {
