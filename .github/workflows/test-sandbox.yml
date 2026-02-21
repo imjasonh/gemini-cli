@@ -109,6 +109,12 @@ jobs:
           # First run prompts to download a default kernel; pipe yes to accept.
           yes | container system start
 
+          # Smoke-test: verify VZ is available for running containers.
+          # GHA macOS runners run inside VMs; nested VZ may not be available.
+          echo "Testing container run (VZ diagnostic)..."
+          container pull docker.io/library/alpine:latest
+          container run --rm alpine echo "container run: VZ works"
+
       - name: 'Install dependencies'
         run: 'npm ci'
 
