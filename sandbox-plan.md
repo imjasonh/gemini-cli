@@ -280,12 +280,12 @@ Strict VM-level isolation using Apple's Container framework.
 
 ### Deliverables
 
-- [ ] `startMacOSContainerSandbox()` implementation
-- [ ] Integration with existing sandbox routing
-- [ ] macOS version detection utility
-- [ ] Updated documentation
+- [x] `startMacOSContainerSandbox()` implementation
+- [x] Integration with existing sandbox routing
+- [x] macOS version detection utility
+- [x] Updated documentation
 - [ ] Manual testing on macOS 15+ machine
-- [ ] Unit tests with mocked `container` CLI
+- [x] Unit tests with mocked `container` CLI
 
 ### Estimated Effort
 

@@ -203,6 +203,15 @@ export async function start_sandbox(
       });
     }
 
+    if (config.command === 'macos-container') {
+      return await startMacOSContainerSandbox(
+        config,
+        nodeArgs,
+        cliConfig,
+        cliArgs,
+      );
+    }
+
     debugLogger.log(`hopping into sandbox (command: ${config.command}) ...`);
 
     // determine full path for gemini-cli to distinguish linked vs installed setting
@@ -862,4 +871,420 @@ async function ensureSandboxImageIsPresent(
     `Failed to obtain sandbox image ${image} after check and pull attempt.`,
   );
   return false; // Pull command failed or image still not present
+}
+
+// --- macOS Container Framework support ---
+
+async function ensureMacOSContainerSystemReady(): Promise<void> {
+  try {
+    // container system start is idempotent
+    await execAsync('container system start', { timeout: 30000 });
+  } catch {
+    throw new FatalSandboxError(
+      'Failed to start macOS Container services.\n' +
+        'Ensure the container CLI is installed: https://github.com/apple/container\n' +
+        'Try running: container system start',
+    );
+  }
+}
+
+async function macOSContainerImageExists(image: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const proc = spawn('container', ['image', 'list', '-q']);
+    let stdout = '';
+    proc.stdout?.on('data', (data: Buffer) => {
+      stdout += data.toString();
+    });
+    proc.on('error', () => resolve(false));
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        resolve(false);
+        return;
+      }
+      // Check if any line in the output matches the image reference
+      const lines = stdout.trim().split('\n');
+      resolve(lines.some((line) => line.trim() === image));
+    });
+  });
+}
+
+async function macOSContainerPullImage(
+  image: string,
+  cliConfig?: Config,
+): Promise<boolean> {
+  debugLogger.log(`Pulling macOS Container image: ${image}...`);
+  return new Promise((resolve) => {
+    const pullProcess = spawn('container', ['image', 'pull', image], {
+      stdio: 'pipe',
+    });
+
+    pullProcess.stdout?.on('data', (data: Buffer) => {
+      if (cliConfig?.getDebugMode() || process.env['DEBUG']) {
+        debugLogger.log(data.toString().trim());
+      }
+    });
+    pullProcess.stderr?.on('data', (data: Buffer) => {
+      // eslint-disable-next-line no-console
+      console.error(data.toString().trim());
+    });
+    pullProcess.on('error', (err) => {
+      debugLogger.warn(`Failed to pull image: ${err.message}`);
+      resolve(false);
+    });
+    pullProcess.on('close', (code) => {
+      if (code === 0) {
+        debugLogger.log(`Successfully pulled image ${image}.`);
+        resolve(true);
+      } else {
+        debugLogger.warn(`Failed to pull image ${image} (exit code ${code}).`);
+        resolve(false);
+      }
+    });
+  });
+}
+
+async function ensureMacOSContainerImage(
+  image: string,
+  cliConfig?: Config,
+): Promise<boolean> {
+  debugLogger.log(`Checking for macOS Container image: ${image}`);
+  if (await macOSContainerImageExists(image)) {
+    debugLogger.log(`macOS Container image ${image} found locally.`);
+    return true;
+  }
+
+  debugLogger.log(`macOS Container image ${image} not found locally.`);
+  if (image === LOCAL_DEV_SANDBOX_IMAGE_NAME) {
+    return false;
+  }
+
+  if (await macOSContainerPullImage(image, cliConfig)) {
+    return true;
+  }
+
+  coreEvents.emitFeedback(
+    'error',
+    `Failed to obtain macOS Container image ${image}.`,
+  );
+  return false;
+}
+
+async function startMacOSContainerSandbox(
+  config: SandboxConfig,
+  nodeArgs: string[],
+  cliConfig?: Config,
+  cliArgs: string[] = [],
+): Promise<number> {
+  debugLogger.log('hopping into macOS Container sandbox...');
+
+  if (process.env['BUILD_SANDBOX']) {
+    throw new FatalSandboxError(
+      'Cannot BUILD_SANDBOX when using macOS Container. ' +
+        'Build the image using Docker, then push it to a registry.',
+    );
+  }
+
+  await ensureMacOSContainerSystemReady();
+
+  const image = config.image;
+  const workdir = path.resolve(process.cwd());
+
+  if (!(await ensureMacOSContainerImage(image, cliConfig))) {
+    const remedy =
+      image === LOCAL_DEV_SANDBOX_IMAGE_NAME
+        ? 'Try building the image with Docker first, then push it to a registry accessible by the container CLI.'
+        : 'Please check the image name and your network connection.';
+    throw new FatalSandboxError(
+      `macOS Container image '${image}' could not be obtained. ${remedy}`,
+    );
+  }
+
+  const args: string[] = ['run', '-i', '--rm', '--workdir', workdir];
+
+  // Custom flags from SANDBOX_FLAGS
+  if (process.env['SANDBOX_FLAGS']) {
+    const flags = parse(process.env['SANDBOX_FLAGS'], process.env).filter(
+      (f): f is string => typeof f === 'string',
+    );
+    args.push(...flags);
+  }
+
+  // TTY if stdin is TTY
+  if (process.stdin.isTTY) {
+    args.push('-t');
+  }
+
+  // Enable Rosetta for x86_64 image compatibility on Apple Silicon
+  args.push('--rosetta');
+
+  // Mount working directory
+  args.push('--volume', `${workdir}:${workdir}`);
+
+  // Mount settings directory
+  const userHomeDirOnHost = homedir();
+  const userSettingsDirOnHost = path.join(userHomeDirOnHost, GEMINI_DIR);
+  if (!fs.existsSync(userSettingsDirOnHost)) {
+    fs.mkdirSync(userSettingsDirOnHost, { recursive: true });
+  }
+  args.push('--volume', `${userSettingsDirOnHost}:${userSettingsDirOnHost}`);
+
+  // Mount tmp directory
+  args.push('--volume', `${os.tmpdir()}:${os.tmpdir()}`);
+
+  // Mount home directory
+  args.push('--volume', `${userHomeDirOnHost}:${userHomeDirOnHost}`);
+
+  // Mount gcloud config if exists
+  const gcloudConfigDir = path.join(homedir(), '.config', 'gcloud');
+  if (fs.existsSync(gcloudConfigDir)) {
+    args.push('--volume', `${gcloudConfigDir}:${gcloudConfigDir}`);
+  }
+
+  // Mount ADC file if set
+  if (process.env['GOOGLE_APPLICATION_CREDENTIALS']) {
+    const adcFile = process.env['GOOGLE_APPLICATION_CREDENTIALS'];
+    if (fs.existsSync(adcFile)) {
+      args.push('--volume', `${adcFile}:${adcFile}`);
+      args.push('-e', `GOOGLE_APPLICATION_CREDENTIALS=${adcFile}`);
+    }
+  }
+
+  // Custom mounts from SANDBOX_MOUNTS
+  if (process.env['SANDBOX_MOUNTS']) {
+    for (let mount of process.env['SANDBOX_MOUNTS'].split(',')) {
+      if (mount.trim()) {
+        let [from, to, opts] = mount.trim().split(':');
+        to = to || from;
+        opts = opts || 'ro';
+        mount = `${from}:${to}:${opts}`;
+        if (!path.isAbsolute(from)) {
+          throw new FatalSandboxError(
+            `Path '${from}' listed in SANDBOX_MOUNTS must be absolute`,
+          );
+        }
+        if (!fs.existsSync(from)) {
+          throw new FatalSandboxError(
+            `Missing mount path '${from}' listed in SANDBOX_MOUNTS`,
+          );
+        }
+        debugLogger.log(`SANDBOX_MOUNTS: ${from} -> ${to} (${opts})`);
+        args.push('--volume', mount);
+      }
+    }
+  }
+
+  // Port forwarding
+  ports().forEach((p) => args.push('--publish', `${p}:${p}`));
+
+  // Debug port
+  if (process.env['DEBUG']) {
+    const debugPort = process.env['DEBUG_PORT'] || '9229';
+    args.push('--publish', `${debugPort}:${debugPort}`);
+  }
+
+  // Container name
+  const containerName = `gemini-sandbox-${randomBytes(4).toString('hex')}`;
+  args.push('--name', containerName);
+
+  // Forward environment variables
+  if (process.env['GEMINI_CLI_TEST_VAR']) {
+    args.push(
+      '-e',
+      `GEMINI_CLI_TEST_VAR=${process.env['GEMINI_CLI_TEST_VAR']}`,
+    );
+  }
+  if (process.env['GEMINI_API_KEY']) {
+    args.push('-e', `GEMINI_API_KEY=${process.env['GEMINI_API_KEY']}`);
+  }
+  if (process.env['GOOGLE_API_KEY']) {
+    args.push('-e', `GOOGLE_API_KEY=${process.env['GOOGLE_API_KEY']}`);
+  }
+  if (process.env['GOOGLE_GEMINI_BASE_URL']) {
+    args.push(
+      '-e',
+      `GOOGLE_GEMINI_BASE_URL=${process.env['GOOGLE_GEMINI_BASE_URL']}`,
+    );
+  }
+  if (process.env['GOOGLE_VERTEX_BASE_URL']) {
+    args.push(
+      '-e',
+      `GOOGLE_VERTEX_BASE_URL=${process.env['GOOGLE_VERTEX_BASE_URL']}`,
+    );
+  }
+  if (process.env['GOOGLE_GENAI_USE_VERTEXAI']) {
+    args.push(
+      '-e',
+      `GOOGLE_GENAI_USE_VERTEXAI=${process.env['GOOGLE_GENAI_USE_VERTEXAI']}`,
+    );
+  }
+  if (process.env['GOOGLE_GENAI_USE_GCA']) {
+    args.push(
+      '-e',
+      `GOOGLE_GENAI_USE_GCA=${process.env['GOOGLE_GENAI_USE_GCA']}`,
+    );
+  }
+  if (process.env['GOOGLE_CLOUD_PROJECT']) {
+    args.push(
+      '-e',
+      `GOOGLE_CLOUD_PROJECT=${process.env['GOOGLE_CLOUD_PROJECT']}`,
+    );
+  }
+  if (process.env['GOOGLE_CLOUD_LOCATION']) {
+    args.push(
+      '-e',
+      `GOOGLE_CLOUD_LOCATION=${process.env['GOOGLE_CLOUD_LOCATION']}`,
+    );
+  }
+  if (process.env['GEMINI_MODEL']) {
+    args.push('-e', `GEMINI_MODEL=${process.env['GEMINI_MODEL']}`);
+  }
+  if (process.env['TERM']) {
+    args.push('-e', `TERM=${process.env['TERM']}`);
+  }
+  if (process.env['COLORTERM']) {
+    args.push('-e', `COLORTERM=${process.env['COLORTERM']}`);
+  }
+
+  // IDE mode variables
+  for (const envVar of [
+    'GEMINI_CLI_IDE_SERVER_PORT',
+    'GEMINI_CLI_IDE_WORKSPACE_PATH',
+    'TERM_PROGRAM',
+  ]) {
+    if (process.env[envVar]) {
+      args.push('-e', `${envVar}=${process.env[envVar]}`);
+    }
+  }
+
+  // VIRTUAL_ENV if under working directory
+  if (
+    process.env['VIRTUAL_ENV']?.toLowerCase().startsWith(workdir.toLowerCase())
+  ) {
+    const sandboxVenvPath = path.resolve(GEMINI_DIR, 'sandbox.venv');
+    if (!fs.existsSync(sandboxVenvPath)) {
+      fs.mkdirSync(sandboxVenvPath, { recursive: true });
+    }
+    args.push('--volume', `${sandboxVenvPath}:${process.env['VIRTUAL_ENV']}`);
+    args.push('-e', `VIRTUAL_ENV=${process.env['VIRTUAL_ENV']}`);
+  }
+
+  // Custom env from SANDBOX_ENV
+  if (process.env['SANDBOX_ENV']) {
+    for (let env of process.env['SANDBOX_ENV'].split(',')) {
+      if ((env = env.trim())) {
+        if (env.includes('=')) {
+          debugLogger.log(`SANDBOX_ENV: ${env}`);
+          args.push('-e', env);
+        } else {
+          throw new FatalSandboxError(
+            'SANDBOX_ENV must be a comma-separated list of key=value pairs',
+          );
+        }
+      }
+    }
+  }
+
+  // NODE_OPTIONS
+  const existingNodeOptions = process.env['NODE_OPTIONS'] || '';
+  const allNodeOptions = [
+    ...(existingNodeOptions ? [existingNodeOptions] : []),
+    ...nodeArgs,
+  ].join(' ');
+  if (allNodeOptions.length > 0) {
+    args.push('-e', `NODE_OPTIONS="${allNodeOptions}"`);
+  }
+
+  // SANDBOX env var
+  args.push('-e', `SANDBOX=${containerName}`);
+
+  // Proxy support (host-side proxy, like Seatbelt)
+  const proxyCommand = process.env['GEMINI_SANDBOX_PROXY_COMMAND'];
+  let proxyProcess: ChildProcess | undefined;
+
+  if (proxyCommand) {
+    const proxy =
+      process.env['HTTPS_PROXY'] ||
+      process.env['https_proxy'] ||
+      process.env['HTTP_PROXY'] ||
+      process.env['http_proxy'] ||
+      'http://localhost:8877';
+    args.push('-e', `HTTPS_PROXY=${proxy}`);
+    args.push('-e', `https_proxy=${proxy}`);
+    args.push('-e', `HTTP_PROXY=${proxy}`);
+    args.push('-e', `http_proxy=${proxy}`);
+    const noProxy = process.env['NO_PROXY'] || process.env['no_proxy'];
+    if (noProxy) {
+      args.push('-e', `NO_PROXY=${noProxy}`);
+      args.push('-e', `no_proxy=${noProxy}`);
+    }
+    proxyProcess = spawn(proxyCommand, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: true,
+      detached: true,
+    });
+    const stopProxy = () => {
+      debugLogger.log('stopping proxy...');
+      if (proxyProcess?.pid) {
+        process.kill(-proxyProcess.pid, 'SIGTERM');
+      }
+    };
+    process.off('exit', stopProxy);
+    process.on('exit', stopProxy);
+    process.off('SIGINT', stopProxy);
+    process.on('SIGINT', stopProxy);
+    process.off('SIGTERM', stopProxy);
+    process.on('SIGTERM', stopProxy);
+    proxyProcess.stderr?.on('data', (data) => {
+      debugLogger.debug(`[PROXY STDERR]: ${data.toString().trim()}`);
+    });
+    debugLogger.log('waiting for proxy to start...');
+    await execAsync(
+      'until timeout 0.25 curl -s http://localhost:8877; do sleep 0.25; done',
+    );
+  }
+
+  // Image
+  args.push(image);
+
+  // Entrypoint
+  const finalEntrypoint = entrypoint(workdir, cliArgs);
+  args.push(...finalEntrypoint);
+
+  // Spawn
+  process.stdin.pause();
+  const sandboxProcess = spawn('container', args, {
+    stdio: 'inherit',
+  });
+
+  // Register proxy close handler after sandbox is spawned
+  if (proxyProcess) {
+    proxyProcess.on('close', (code, signal) => {
+      if (sandboxProcess.pid) {
+        process.kill(-sandboxProcess.pid, 'SIGTERM');
+      }
+      throw new FatalSandboxError(
+        `Proxy command '${proxyCommand}' exited with code ${code}, signal ${signal}`,
+      );
+    });
+  }
+
+  return new Promise((resolve, reject) => {
+    sandboxProcess.on('error', (err) => {
+      coreEvents.emitFeedback(
+        'error',
+        'macOS Container sandbox process error',
+        err,
+      );
+      reject(err);
+    });
+    sandboxProcess.on('close', (code, signal) => {
+      process.stdin.resume();
+      if (code !== 0 && code !== null) {
+        debugLogger.log(
+          `macOS Container sandbox exited with code: ${code}, signal: ${signal}`,
+        );
+      }
+      resolve(code ?? 1);
+    });
+  });
 }

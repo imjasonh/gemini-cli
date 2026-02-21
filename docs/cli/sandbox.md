@@ -50,6 +50,33 @@ Cross-platform sandboxing with complete process isolation.
 **Note**: Requires building the sandbox image locally or using a published image
 from your organization's registry.
 
+### 3. macOS Container (macOS 15+ only)
+
+VM-level isolation using Apple's Container framework. Each sandbox runs in a
+lightweight Linux VM with its own kernel, providing the strongest available
+isolation.
+
+**Requirements**: macOS 15 (Sequoia) or later, Apple Silicon,
+[`container` CLI](https://github.com/apple/container) installed.
+
+**Enable**:
+
+- `gemini --sandbox=macos-container`
+- `GEMINI_SANDBOX=macos-container`
+- `{"tools": {"sandbox": "macos-container"}}`
+
+**Benefits**:
+
+- Full VM isolation (separate kernel from host)
+- Uses the same sandbox image as Docker/Podman
+- Rosetta support for x86_64 images on Apple Silicon
+
+**Trade-offs**:
+
+- Runs Linux, not macOS (macOS-specific tools like `open`, `pbcopy` are
+  unavailable)
+- Slightly higher startup time and memory usage than Seatbelt
+
 ## Quickstart
 
 ```bash
@@ -88,7 +115,8 @@ gemini -p "run the test suite"
 ### Enable sandboxing (in order of precedence)
 
 1. **Command flag**: `-s` or `--sandbox`
-2. **Environment variable**: `GEMINI_SANDBOX=true|docker|podman|sandbox-exec`
+2. **Environment variable**:
+   `GEMINI_SANDBOX=true|docker|podman|sandbox-exec|macos-container`
 3. **Settings file**: `"sandbox": true` in the `tools` object of your
    `settings.json` file (e.g., `{"tools": {"sandbox": true}}`).
 

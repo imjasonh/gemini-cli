@@ -473,5 +473,268 @@ describe('sandbox', () => {
       expect(entrypointCmd).toContain('useradd');
       expect(entrypointCmd).toContain('su -p gemini');
     });
+
+    describe('macOS Container sandbox', () => {
+      it('should route macos-container to the container CLI', async () => {
+        vi.mocked(os.platform).mockReturnValue('darwin');
+        const config: SandboxConfig = {
+          command: 'macos-container',
+          image: 'some-image',
+        };
+
+        // 1. container system start (via execAsync)
+        // Already mocked by the promisify mock returning { stdout: '', stderr: '' }
+
+        // 2. container image list -q (image exists check)
+        interface MockProcessWithStdout extends EventEmitter {
+          stdout: EventEmitter;
+        }
+        const mockImageListProcess =
+          new EventEmitter() as MockProcessWithStdout;
+        mockImageListProcess.stdout = new EventEmitter();
+        vi.mocked(spawn).mockImplementationOnce(() => {
+          setTimeout(() => {
+            mockImageListProcess.stdout.emit(
+              'data',
+              Buffer.from('some-image\n'),
+            );
+            mockImageListProcess.emit('close', 0);
+          }, 1);
+          return mockImageListProcess as unknown as ReturnType<typeof spawn>;
+        });
+
+        // 3. container run
+        const mockSpawnProcess = new EventEmitter() as unknown as ReturnType<
+          typeof spawn
+        >;
+        mockSpawnProcess.on = vi.fn().mockImplementation((event, cb) => {
+          if (event === 'close') {
+            setTimeout(() => cb(0), 10);
+          }
+          return mockSpawnProcess;
+        });
+        vi.mocked(spawn).mockImplementationOnce(() => mockSpawnProcess);
+
+        const promise = start_sandbox(config, [], undefined, ['arg1']);
+        await expect(promise).resolves.toBe(0);
+
+        // Verify container CLI was used (not docker)
+        expect(spawn).toHaveBeenCalledWith(
+          'container',
+          expect.arrayContaining(['run', '-i', '--rm', '--rosetta']),
+          expect.objectContaining({ stdio: 'inherit' }),
+        );
+      });
+
+      it('should throw FatalSandboxError if BUILD_SANDBOX is set', async () => {
+        vi.mocked(os.platform).mockReturnValue('darwin');
+        process.env['BUILD_SANDBOX'] = '1';
+        const config: SandboxConfig = {
+          command: 'macos-container',
+          image: 'some-image',
+        };
+
+        await expect(start_sandbox(config)).rejects.toThrow(FatalSandboxError);
+      });
+
+      it('should throw FatalSandboxError if image cannot be obtained', async () => {
+        vi.mocked(os.platform).mockReturnValue('darwin');
+        const config: SandboxConfig = {
+          command: 'macos-container',
+          image: 'missing-image',
+        };
+
+        // 1. container image list -q (image not found)
+        interface MockProcessWithStdout extends EventEmitter {
+          stdout: EventEmitter;
+        }
+        const mockImageListProcess =
+          new EventEmitter() as MockProcessWithStdout;
+        mockImageListProcess.stdout = new EventEmitter();
+        vi.mocked(spawn).mockImplementationOnce(() => {
+          setTimeout(() => {
+            mockImageListProcess.emit('close', 0);
+          }, 1);
+          return mockImageListProcess as unknown as ReturnType<typeof spawn>;
+        });
+
+        // 2. container image pull (fails)
+        interface MockProcessWithStdoutStderr extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockPullProcess =
+          new EventEmitter() as MockProcessWithStdoutStderr;
+        mockPullProcess.stdout = new EventEmitter();
+        mockPullProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockImplementationOnce(() => {
+          setTimeout(() => {
+            mockPullProcess.emit('close', 1);
+          }, 1);
+          return mockPullProcess as unknown as ReturnType<typeof spawn>;
+        });
+
+        await expect(start_sandbox(config)).rejects.toThrow(FatalSandboxError);
+      });
+
+      it('should pull image if not found locally', async () => {
+        vi.mocked(os.platform).mockReturnValue('darwin');
+        const config: SandboxConfig = {
+          command: 'macos-container',
+          image: 'new-image',
+        };
+
+        // 1. container image list -q (image not found)
+        interface MockProcessWithStdout extends EventEmitter {
+          stdout: EventEmitter;
+        }
+        const mockImageListProcess =
+          new EventEmitter() as MockProcessWithStdout;
+        mockImageListProcess.stdout = new EventEmitter();
+        vi.mocked(spawn).mockImplementationOnce(() => {
+          setTimeout(() => {
+            mockImageListProcess.emit('close', 0);
+          }, 1);
+          return mockImageListProcess as unknown as ReturnType<typeof spawn>;
+        });
+
+        // 2. container image pull (succeeds)
+        interface MockProcessWithStdoutStderr extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockPullProcess =
+          new EventEmitter() as MockProcessWithStdoutStderr;
+        mockPullProcess.stdout = new EventEmitter();
+        mockPullProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockImplementationOnce(() => {
+          setTimeout(() => {
+            mockPullProcess.emit('close', 0);
+          }, 1);
+          return mockPullProcess as unknown as ReturnType<typeof spawn>;
+        });
+
+        // 3. container run
+        const mockSpawnProcess = new EventEmitter() as unknown as ReturnType<
+          typeof spawn
+        >;
+        mockSpawnProcess.on = vi.fn().mockImplementation((event, cb) => {
+          if (event === 'close') {
+            setTimeout(() => cb(0), 10);
+          }
+          return mockSpawnProcess;
+        });
+        vi.mocked(spawn).mockImplementationOnce(() => mockSpawnProcess);
+
+        await start_sandbox(config, [], undefined, ['arg1']);
+
+        // Verify pull was called
+        expect(spawn).toHaveBeenCalledWith(
+          'container',
+          ['image', 'pull', 'new-image'],
+          expect.any(Object),
+        );
+      });
+
+      it('should forward environment variables', async () => {
+        vi.mocked(os.platform).mockReturnValue('darwin');
+        const config: SandboxConfig = {
+          command: 'macos-container',
+          image: 'some-image',
+        };
+        process.env['GEMINI_API_KEY'] = 'test-key';
+        process.env['GOOGLE_GEMINI_BASE_URL'] = 'http://test.proxy';
+
+        // 1. container image list -q (image exists)
+        interface MockProcessWithStdout extends EventEmitter {
+          stdout: EventEmitter;
+        }
+        const mockImageListProcess =
+          new EventEmitter() as MockProcessWithStdout;
+        mockImageListProcess.stdout = new EventEmitter();
+        vi.mocked(spawn).mockImplementationOnce(() => {
+          setTimeout(() => {
+            mockImageListProcess.stdout.emit(
+              'data',
+              Buffer.from('some-image\n'),
+            );
+            mockImageListProcess.emit('close', 0);
+          }, 1);
+          return mockImageListProcess as unknown as ReturnType<typeof spawn>;
+        });
+
+        // 2. container run
+        const mockSpawnProcess = new EventEmitter() as unknown as ReturnType<
+          typeof spawn
+        >;
+        mockSpawnProcess.on = vi.fn().mockImplementation((event, cb) => {
+          if (event === 'close') {
+            setTimeout(() => cb(0), 10);
+          }
+          return mockSpawnProcess;
+        });
+        vi.mocked(spawn).mockImplementationOnce(() => mockSpawnProcess);
+
+        await start_sandbox(config);
+
+        expect(spawn).toHaveBeenCalledWith(
+          'container',
+          expect.arrayContaining([
+            '-e',
+            'GEMINI_API_KEY=test-key',
+            '-e',
+            'GOOGLE_GEMINI_BASE_URL=http://test.proxy',
+          ]),
+          expect.any(Object),
+        );
+      });
+
+      it('should mount volumes correctly', async () => {
+        vi.mocked(os.platform).mockReturnValue('darwin');
+        const config: SandboxConfig = {
+          command: 'macos-container',
+          image: 'some-image',
+        };
+        process.env['SANDBOX_MOUNTS'] = '/host/path:/container/path:ro';
+
+        // 1. container image list -q (image exists)
+        interface MockProcessWithStdout extends EventEmitter {
+          stdout: EventEmitter;
+        }
+        const mockImageListProcess =
+          new EventEmitter() as MockProcessWithStdout;
+        mockImageListProcess.stdout = new EventEmitter();
+        vi.mocked(spawn).mockImplementationOnce(() => {
+          setTimeout(() => {
+            mockImageListProcess.stdout.emit(
+              'data',
+              Buffer.from('some-image\n'),
+            );
+            mockImageListProcess.emit('close', 0);
+          }, 1);
+          return mockImageListProcess as unknown as ReturnType<typeof spawn>;
+        });
+
+        // 2. container run
+        const mockSpawnProcess = new EventEmitter() as unknown as ReturnType<
+          typeof spawn
+        >;
+        mockSpawnProcess.on = vi.fn().mockImplementation((event, cb) => {
+          if (event === 'close') {
+            setTimeout(() => cb(0), 10);
+          }
+          return mockSpawnProcess;
+        });
+        vi.mocked(spawn).mockImplementationOnce(() => mockSpawnProcess);
+
+        await start_sandbox(config);
+
+        expect(spawn).toHaveBeenCalledWith(
+          'container',
+          expect.arrayContaining(['--volume', '/host/path:/container/path:ro']),
+          expect.any(Object),
+        );
+      });
+    });
   });
 });
