@@ -187,7 +187,72 @@ describe('sandbox verification', () => {
     });
   });
 
-  // --- Group 4: Seccomp restrictions (bwrap/landlock only) ---
+  // --- Group 4: Container isolation (docker/podman/macos-container only) ---
+  // Container sandboxes write to their own isolated filesystem. Writes to
+  // non-mounted paths (like /var/tmp) succeed inside the container but must
+  // NOT appear on the host.
+  describe.skipIf(!isContainer || skipAll)('container isolation', () => {
+    let rig: TestRig;
+    const containedFile = '/var/tmp/gemini-sandbox-test-contained';
+
+    beforeAll(async () => {
+      // Clean up any leftover file from previous runs
+      try {
+        fs.unlinkSync(containedFile);
+      } catch {
+        // Ignore if doesn't exist
+      }
+
+      rig = new TestRig();
+      await rig.setup('sandbox-container', {
+        settings: { tools: { core: ['run_shell_command'] } },
+        fakeResponsesPath: join(
+          import.meta.dirname,
+          'sandbox-container.responses',
+        ),
+      });
+      await rig.run({
+        args: 'Test container isolation',
+      });
+      await rig.waitForToolCall('run_shell_command', undefined, (args) =>
+        args.includes(containedFile),
+      );
+    });
+
+    afterAll(async () => {
+      if (rig) await rig.cleanup();
+      try {
+        fs.unlinkSync(containedFile);
+      } catch {
+        // Ignore
+      }
+    });
+
+    it('should isolate container writes from the host', async () => {
+      const toolLogs = rig
+        .readToolLogs()
+        .filter((l) => l.toolRequest.name === 'run_shell_command');
+      const touchCall = toolLogs.find((l) =>
+        l.toolRequest.args.includes(containedFile),
+      );
+      expect(
+        touchCall,
+        `Expected touch ${containedFile} tool call`,
+      ).toBeTruthy();
+
+      // The touch should have succeeded inside the container.
+      expect(touchCall!.toolRequest.success).toBe(true);
+
+      // But the file must NOT exist on the host — it was written to the
+      // container's own /var/tmp, which is not mounted from the host.
+      expect(
+        fs.existsSync(containedFile),
+        `Expected ${containedFile} to NOT exist on host (container should isolate writes)`,
+      ).toBe(false);
+    });
+  });
+
+  // --- Group 5: Seccomp restrictions (bwrap/landlock only) ---
   describe.skipIf(!hasSeccomp || skipAll)('seccomp restrictions', () => {
     let rig: TestRig;
 
