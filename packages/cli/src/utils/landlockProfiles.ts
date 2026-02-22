@@ -73,6 +73,7 @@ export function buildLandlockProfile(
         rwPaths: [
           workdir,
           tmpDir,
+          '/dev',
           path.join(homeDir, '.gemini'),
           path.join(homeDir, '.npm'),
           path.join(homeDir, '.cache'),
@@ -88,7 +89,7 @@ export function buildLandlockProfile(
     case 'restrictive':
       return {
         name: profileName,
-        rwPaths: [workdir, tmpDir],
+        rwPaths: [workdir, tmpDir, '/dev'],
         roPaths: [
           path.join(homeDir, '.gemini'),
           path.join(homeDir, '.gitconfig'),
@@ -101,7 +102,7 @@ export function buildLandlockProfile(
     case 'strict':
       return {
         name: profileName,
-        rwPaths: [workdir],
+        rwPaths: [workdir, '/dev'],
         roPaths: [],
         rxPaths: systemRxPaths,
         useSeccomp: true,

@@ -52,6 +52,7 @@ describe('landlockProfiles', () => {
         expect(profile.rwPaths).toContain('/home/user/.gemini');
         expect(profile.rwPaths).toContain('/home/user/.npm');
         expect(profile.rwPaths).toContain('/home/user/.cache');
+        expect(profile.rwPaths).toContain('/dev');
         expect(profile.useSeccomp).toBe(true);
       });
 
@@ -129,7 +130,8 @@ describe('landlockProfiles', () => {
           tmpDir,
         );
         expect(profile.name).toBe('strict');
-        expect(profile.rwPaths).toEqual([workdir]);
+        expect(profile.rwPaths).toContain(workdir);
+        expect(profile.rwPaths).toContain('/dev');
       });
 
       it('should have no ro paths and only system rx paths', () => {
@@ -155,7 +157,8 @@ describe('landlockProfiles', () => {
           tmpDir,
         );
         expect(profile.name).toBe('strict-proxied');
-        expect(profile.rwPaths).toEqual([workdir]);
+        expect(profile.rwPaths).toContain(workdir);
+        expect(profile.rwPaths).toContain('/dev');
         expect(profile.useSeccomp).toBe(true);
       });
     });
