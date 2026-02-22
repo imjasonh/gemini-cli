@@ -151,8 +151,8 @@ jobs:
       - name: 'Report sandbox metrics'
         if: 'always()'
         run: |
-          TELEM_FILE=$(find .integration-tests -name 'telemetry.log' -type f | head -1)
-          node scripts/process-sandbox-metrics.js "${TELEM_FILE}" >> "${GITHUB_STEP_SUMMARY}"
+          find .integration-tests -name 'telemetry.log' -type f -print0 \
+            | xargs -0 node scripts/process-sandbox-metrics.js >> "${GITHUB_STEP_SUMMARY}"
 
   sandbox-summary:
     name: 'Sandbox Tests Summary'

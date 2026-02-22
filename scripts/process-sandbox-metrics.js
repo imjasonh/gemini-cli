@@ -6,56 +6,66 @@
 
 import fs from 'node:fs';
 
-const inputFile = process.argv[2];
+const inputFiles = process.argv.slice(2).filter((f) => fs.existsSync(f));
 
-if (!inputFile || !fs.existsSync(inputFile)) {
-  console.log('No telemetry file found or provided.');
+if (inputFiles.length === 0) {
+  console.log('No telemetry files found or provided.');
   process.exit(0);
 }
 
-const content = fs.readFileSync(inputFile, 'utf-8');
+// Parse concatenated JSON objects from a string. The telemetry file contains
+// multiple JSON objects written back-to-back (not newline-delimited).
+function parseJsonObjects(content) {
+  const objects = [];
+  let braceCount = 0;
+  let currentObject = '';
+  let inString = false;
+  let escape = false;
 
-// The file contains concatenated JSON objects. Split by counting braces.
-const objects = [];
-let braceCount = 0;
-let currentObject = '';
-let inString = false;
-let escape = false;
+  for (let i = 0; i < content.length; i++) {
+    const char = content[i];
+    currentObject += char;
 
-for (let i = 0; i < content.length; i++) {
-  const char = content[i];
-  currentObject += char;
+    if (escape) {
+      escape = false;
+      continue;
+    }
 
-  if (escape) {
-    escape = false;
-    continue;
-  }
+    if (char === '\\') {
+      escape = true;
+      continue;
+    }
 
-  if (char === '\\') {
-    escape = true;
-    continue;
-  }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
 
-  if (char === '"') {
-    inString = !inString;
-    continue;
-  }
-
-  if (!inString) {
-    if (char === '{') {
-      braceCount++;
-    } else if (char === '}') {
-      braceCount--;
-      if (braceCount === 0) {
-        try {
-          objects.push(JSON.parse(currentObject.trim()));
-        } catch (_e) {
-          // Ignore parse errors (e.g. partial writes)
+    if (!inString) {
+      if (char === '{') {
+        braceCount++;
+      } else if (char === '}') {
+        braceCount--;
+        if (braceCount === 0) {
+          try {
+            objects.push(JSON.parse(currentObject.trim()));
+          } catch (_e) {
+            // Ignore parse errors (e.g. partial writes)
+          }
+          currentObject = '';
         }
-        currentObject = '';
       }
     }
   }
+
+  return objects;
+}
+
+// Collect all JSON objects from all telemetry files
+const objects = [];
+for (const inputFile of inputFiles) {
+  const content = fs.readFileSync(inputFile, 'utf-8');
+  objects.push(...parseJsonObjects(content));
 }
 
 // Aggregation variables
