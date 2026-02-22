@@ -138,6 +138,7 @@ jobs:
           GEMINI_API_KEY: 'fake-key-for-sandbox-test'
           KEEP_OUTPUT: 'true'
           VERBOSE: 'true'
+          WSLENV: 'GEMINI_API_KEY:KEEP_OUTPUT:VERBOSE'
         run: 'npm run test:integration:sandbox:${{ matrix.sandbox }} -- sandbox-verification.test.ts'
 
       - name: 'Report sandbox metrics'
