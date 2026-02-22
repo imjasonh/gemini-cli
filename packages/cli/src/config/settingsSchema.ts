@@ -1243,7 +1243,7 @@ const SETTINGS_SCHEMA = {
           Sandbox execution environment. Set to true to auto-detect, false to disable,
           or specify: "docker", "podman", "sandbox-exec" (macOS),
           "bwrap" (Linux), "landlock" (Linux, recommended), or
-          "macos-container" (macOS 15+).
+          "macos-container" (macOS 26+).
         `,
         showInDialog: false,
       },

@@ -754,7 +754,7 @@ their corresponding top-level category object in your `settings.json` file.
   - **Description:** Sandbox execution environment. Set to true to auto-detect,
     false to disable, or specify: "docker", "podman", "sandbox-exec" (macOS),
     "bwrap" (Linux), "landlock" (Linux, recommended), or "macos-container"
-    (macOS 15+).
+    (macOS 26+).
   - **Default:** `undefined`
   - **Requires restart:** Yes
 

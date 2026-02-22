@@ -188,7 +188,7 @@ describe('loadSandboxConfig', () => {
       process.env['GEMINI_SANDBOX'] = 'macos-container';
       mockedIsMacOSContainerAvailable.mockResolvedValue(false);
       await expect(loadSandboxConfig({}, {})).rejects.toThrow(
-        `Sandbox command 'macos-container' is not available: requires macOS 15+ and the 'container' CLI`,
+        `Sandbox command 'macos-container' is not available: requires macOS 26+ and the 'container' CLI`,
       );
     });
   });

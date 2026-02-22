@@ -116,7 +116,7 @@ async function getSandboxCommand(
         return 'macos-container';
       }
       throw new FatalSandboxError(
-        `Sandbox command 'macos-container' is not available: requires macOS 15+ and the 'container' CLI`,
+        `Sandbox command 'macos-container' is not available: requires macOS 26+ and the 'container' CLI`,
       );
     }
 

@@ -1277,8 +1277,8 @@
       "properties": {
         "sandbox": {
           "title": "Sandbox",
-          "description": "Sandbox execution environment. Set to true to auto-detect, false to disable, or specify: \"docker\", \"podman\", \"sandbox-exec\" (macOS), \"bwrap\" (Linux), \"landlock\" (Linux, recommended), or \"macos-container\" (macOS 15+).",
-          "markdownDescription": "Sandbox execution environment. Set to true to auto-detect, false to disable, or specify: \"docker\", \"podman\", \"sandbox-exec\" (macOS), \"bwrap\" (Linux), \"landlock\" (Linux, recommended), or \"macos-container\" (macOS 15+).\n\n- Category: `Tools`\n- Requires restart: `yes`",
+          "description": "Sandbox execution environment. Set to true to auto-detect, false to disable, or specify: \"docker\", \"podman\", \"sandbox-exec\" (macOS), \"bwrap\" (Linux), \"landlock\" (Linux, recommended), or \"macos-container\" (macOS 26+).",
+          "markdownDescription": "Sandbox execution environment. Set to true to auto-detect, false to disable, or specify: \"docker\", \"podman\", \"sandbox-exec\" (macOS), \"bwrap\" (Linux), \"landlock\" (Linux, recommended), or \"macos-container\" (macOS 26+).\n\n- Category: `Tools`\n- Requires restart: `yes`",
           "$ref": "#/$defs/BooleanOrString"
         },
         "shell": {

@@ -35,7 +35,7 @@ The benefits of sandboxing include:
 
 | Feature           | sandbox-exec  | macos-container      | docker/podman | bwrap         | landlock      |
 | ----------------- | ------------- | -------------------- | ------------- | ------------- | ------------- |
-| Platform          | macOS         | macOS 15+            | All           | Linux         | Linux 5.13+   |
+| Platform          | macOS         | macOS 26+            | All           | Linux         | Linux 5.13+   |
 | Isolation         | Process       | VM (separate kernel) | Container     | Namespace     | Kernel ACLs   |
 | Startup time      | Fast          | Medium               | Medium        | Fast          | Fast          |
 | Image required    | No            | Yes                  | Yes           | No            | No            |
@@ -46,7 +46,7 @@ The benefits of sandboxing include:
 **Quick guide:**
 
 - **macOS**: `sandbox-exec` is the default. Use `macos-container` for stronger
-  VM-level isolation (requires Apple Silicon, macOS 15+, and the `container`
+  VM-level isolation (requires Apple Silicon, macOS 26+, and the `container`
   CLI).
 - **Linux**: `landlock` is recommended (auto-detected with `sandbox: true`). Use
   `bwrap` on older kernels, or `docker`/`podman` for a consistent container
@@ -77,7 +77,7 @@ Cross-platform sandboxing with complete process isolation.
 **Note**: Requires building the sandbox image locally or using a published image
 from your organization's registry.
 
-### 3. macOS Container (macOS 15+ only)
+### 3. macOS Container (macOS 26+ only)
 
 VM-level isolation using Apple's Container framework. Each sandbox runs in a
 lightweight Linux VM with its own kernel, providing the strongest available
