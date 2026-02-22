@@ -147,13 +147,13 @@ jobs:
           KEEP_OUTPUT: 'true'
           VERBOSE: 'true'
           GEMINI_TELEMETRY_ENABLED: 'true'
-          GEMINI_TELEMETRY_OUTFILE: "${{ runner.os == 'Windows' && '/tmp/telemetry.json' || format('{0}/telemetry.json', github.workspace) }}"
+          GEMINI_TELEMETRY_OUTFILE: '/tmp/telemetry.json'
         run: 'npm run test:integration:sandbox:${{ matrix.sandbox }} -- sandbox-verification.test.ts'
 
       - name: 'Report sandbox metrics'
         if: 'always()'
         env:
-          GEMINI_TELEMETRY_OUTFILE: "${{ runner.os == 'Windows' && '/tmp/telemetry.json' || format('{0}/telemetry.json', github.workspace) }}"
+          GEMINI_TELEMETRY_OUTFILE: '/tmp/telemetry.json'
         run: |
           node scripts/process-sandbox-metrics.js "${GEMINI_TELEMETRY_OUTFILE}" >> "${GITHUB_STEP_SUMMARY}"
 
