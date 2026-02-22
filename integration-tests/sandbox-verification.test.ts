@@ -15,47 +15,14 @@ const isContainer =
 const hasSeccomp = sandbox === 'bwrap' || sandbox === 'landlock';
 const skipAll = !sandbox || sandbox === 'false';
 
-describe('sandbox verification', () => {
-  // --- Group 1: Basic functionality (all sandbox types) ---
-  describe('basic functionality', () => {
-    let rig: TestRig;
-
-    beforeAll(async () => {
-      rig = new TestRig();
-      await rig.setup('sandbox-basic', {
-        settings: { tools: { core: ['run_shell_command'] } },
-        fakeResponsesPath: join(
-          import.meta.dirname,
-          'sandbox-verification.responses',
-        ),
-      });
-    });
-
-    afterAll(async () => {
-      await rig.cleanup();
-    });
-
-    it('should run in the expected sandbox environment', async () => {
-      if (skipAll) return;
-
-      await rig.run({
-        args: 'Check sandbox environment',
-      });
-
-      const foundToolCall = await rig.waitForToolCall('run_shell_command');
-      expect(
-        foundToolCall,
-        `Expected run_shell_command to be called inside ${sandbox} sandbox`,
-      ).toBeTruthy();
-    });
-  });
-
-  // --- Group 2: Allowed operations (all sandbox types) ---
+describe.skipIf(skipAll)('sandbox verification', () => {
+  // --- Group 1: Allowed operations (all sandbox types) ---
+  // Verifies that shell commands, workdir writes, and system file reads
+  // all work inside the sandbox.
   describe('allowed operations', () => {
     let rig: TestRig;
 
     beforeAll(async () => {
-      if (skipAll) return;
       rig = new TestRig();
       await rig.setup('sandbox-allowed', {
         settings: { tools: { core: ['run_shell_command'] } },
@@ -76,9 +43,7 @@ describe('sandbox verification', () => {
       if (rig) await rig.cleanup();
     });
 
-    it('should run echo successfully', async () => {
-      if (skipAll) return;
-
+    it('should execute shell commands', async () => {
       const toolLogs = rig
         .readToolLogs()
         .filter((l) => l.toolRequest.name === 'run_shell_command');
@@ -90,8 +55,6 @@ describe('sandbox verification', () => {
     });
 
     it('should write and read files in workdir', async () => {
-      if (skipAll) return;
-
       const toolLogs = rig
         .readToolLogs()
         .filter((l) => l.toolRequest.name === 'run_shell_command');
@@ -110,8 +73,6 @@ describe('sandbox verification', () => {
     });
 
     it('should read system files', async () => {
-      if (skipAll) return;
-
       const toolLogs = rig
         .readToolLogs()
         .filter((l) => l.toolRequest.name === 'run_shell_command');
@@ -123,11 +84,11 @@ describe('sandbox verification', () => {
     });
   });
 
-  // --- Group 3: Filesystem restrictions (non-container sandboxes only) ---
+  // --- Group 2: Filesystem restrictions (non-container sandboxes only) ---
   // Container sandboxes have isolated filesystems, so writes to host-
   // protected paths succeed inside the container. Filesystem write denial
   // only applies to non-container sandboxes (sandbox-exec, bwrap, landlock).
-  describe.skipIf(isContainer || skipAll)('filesystem restrictions', () => {
+  describe.skipIf(isContainer)('filesystem restrictions', () => {
     let rig: TestRig;
     // Use a path writable by the current user but outside sandbox-allowed
     // write paths. /var/tmp resolves to /private/var/tmp on macOS, which is
@@ -187,11 +148,11 @@ describe('sandbox verification', () => {
     });
   });
 
-  // --- Group 4: Container isolation (docker/podman/macos-container only) ---
+  // --- Group 3: Container isolation (docker/podman/macos-container only) ---
   // Container sandboxes write to their own isolated filesystem. Writes to
   // non-mounted paths (like /var/tmp) succeed inside the container but must
   // NOT appear on the host.
-  describe.skipIf(!isContainer || skipAll)('container isolation', () => {
+  describe.skipIf(!isContainer)('container isolation', () => {
     let rig: TestRig;
     const containedFile = '/var/tmp/gemini-sandbox-test-contained';
 
@@ -252,8 +213,8 @@ describe('sandbox verification', () => {
     });
   });
 
-  // --- Group 5: Seccomp restrictions (bwrap/landlock only) ---
-  describe.skipIf(!hasSeccomp || skipAll)('seccomp restrictions', () => {
+  // --- Group 4: Seccomp restrictions (bwrap/landlock only) ---
+  describe.skipIf(!hasSeccomp)('seccomp restrictions', () => {
     let rig: TestRig;
 
     beforeAll(async () => {
