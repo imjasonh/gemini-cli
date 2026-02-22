@@ -151,8 +151,10 @@ jobs:
       - name: 'Report sandbox metrics'
         if: 'always()'
         run: |
-          find .integration-tests -name 'telemetry.log' -type f -print0 \
-            | xargs -0 node scripts/process-sandbox-metrics.js >> "${GITHUB_STEP_SUMMARY}"
+          if [ -d .integration-tests ]; then
+            find .integration-tests -name 'telemetry.log' -type f -print0 \
+              | xargs -0 node scripts/process-sandbox-metrics.js >> "${GITHUB_STEP_SUMMARY}"
+          fi
 
   sandbox-summary:
     name: 'Sandbox Tests Summary'
