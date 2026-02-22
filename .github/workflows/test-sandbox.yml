@@ -43,7 +43,7 @@ jobs:
 
     defaults:
       run:
-        shell: "${{ runner.os == 'Windows' && 'wsl-bash {0}' || 'bash' }}"
+        shell: "${{ contains(matrix.os, 'windows') && 'wsl-bash {0}' || 'bash' }}"
 
     steps:
       - name: 'Checkout'
