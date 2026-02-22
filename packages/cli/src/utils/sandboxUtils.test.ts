@@ -405,6 +405,7 @@ describe('sandboxUtils', () => {
     it('should return false on plain Linux', () => {
       vi.mocked(os.platform).mockReturnValue('linux');
       vi.mocked(fs.existsSync).mockReturnValue(false);
+      delete process.env['WSL_DISTRO_NAME'];
       expect(isWSL()).toBe(false);
     });
   });
@@ -413,6 +414,7 @@ describe('sandboxUtils', () => {
     it('should return false when not in WSL', () => {
       vi.mocked(os.platform).mockReturnValue('linux');
       vi.mocked(fs.existsSync).mockReturnValue(false);
+      delete process.env['WSL_DISTRO_NAME'];
       expect(isWSL2()).toBe(false);
     });
 

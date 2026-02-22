@@ -138,6 +138,13 @@ describe('sandbox', () => {
     vi.mocked(os.platform).mockReturnValue('linux');
     vi.mocked(os.homedir).mockReturnValue('/home/user');
     vi.mocked(os.tmpdir).mockReturnValue('/tmp');
+    vi.mocked(os.userInfo).mockReturnValue({
+      username: 'user',
+      uid: 1000,
+      gid: 1000,
+      homedir: '/home/user',
+      shell: '/bin/bash',
+    });
     vi.mocked(fs.existsSync).mockReturnValue(true);
     vi.mocked(fs.realpathSync).mockImplementation((p) => p as string);
     vi.mocked(execSync).mockReturnValue(Buffer.from(''));
