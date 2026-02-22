@@ -124,8 +124,7 @@ jobs:
       - name: 'Build project'
         run: 'npm run build'
 
-      - name: 'Run sandbox unit tests (Linux / Windows)'
-        if: "runner.os == 'Linux' || runner.os == 'Windows'"
+      - name: 'Run sandbox unit tests'
         run: |
           npx vitest run \
             packages/cli/src/utils/sandbox.test.ts \
@@ -133,13 +132,6 @@ jobs:
             packages/cli/src/utils/bwrapProfiles.test.ts \
             packages/cli/src/utils/bwrap-seccomp.test.ts \
             packages/cli/src/utils/landlockProfiles.test.ts
-
-      - name: 'Run sandbox unit tests (macOS)'
-        if: "runner.os == 'macOS'"
-        run: |
-          npx vitest run \
-            packages/cli/src/utils/sandbox.test.ts \
-            packages/cli/src/utils/sandboxUtils.test.ts
 
       - name: 'Run sandbox verification test'
         env:
