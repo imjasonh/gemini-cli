@@ -144,6 +144,21 @@ Modern kernel-based sandboxing using Landlock (filesystem) and Seccomp
 - Defense-in-depth with Seccomp syscall filtering
 - Recommended for modern Linux systems
 
+### Windows (WSL2)
+
+Sandboxing is supported on Windows via WSL2 (Windows Subsystem for Linux 2).
+
+- **WSL2**: All Linux sandbox mechanisms work (`bwrap`, `landlock`, `docker`).
+  WSL2 runs a real Linux kernel, so namespace and seccomp-based sandboxing
+  functions normally.
+- **WSL1**: Sandboxing is automatically skipped because WSL1 lacks the kernel
+  features required for Linux sandboxing.
+
+**Workspace path**: For best results, use a Linux-native filesystem path (e.g.
+`/home/you/project`) rather than a Windows-mounted path (`/mnt/c/...`). NTFS
+paths accessed via 9P may have permission issues with bind mounts and are
+significantly slower for I/O-heavy operations like `npm install`.
+
 ## Quickstart
 
 ```bash

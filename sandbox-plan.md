@@ -625,6 +625,7 @@ Extend existing test files:
 | `docker`          | `ubuntu-latest` | Docker pre-installed                             |
 | `podman`          | `ubuntu-latest` | Need to install podman                           |
 | `bwrap`           | `ubuntu-latest` | Need to install bubblewrap + enable user ns      |
+| `bwrap` (WSL2)    | `windows-2025`  | WSL2 via setup-wsl, Node.js 20 via NodeSource    |
 | `landlock`        | `ubuntu-latest` | Need to build landlock-helper + mount securityfs |
 
 **Note**: `macos-container` requires Apple's Virtualization.framework, which is
@@ -1366,8 +1367,8 @@ test-sandbox-wsl:
 - [x] WSL2 not treated as container (sandboxing works normally)
 - [x] WSL1 treated as container (sandboxing skipped with message)
 - [x] Unit tests for WSL detection and sandbox config
-- [ ] GitHub Actions WSL testing workflow
-- [ ] Documentation for WSL users
+- [x] GitHub Actions WSL testing workflow
+- [x] Documentation for WSL users
 
 ### Estimated Effort
 

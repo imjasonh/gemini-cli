@@ -38,18 +38,38 @@ jobs:
           # Both `container build` and `container run` fail. Test locally only.
           - sandbox: 'docker'
             os: 'ubuntu-latest'
+          - sandbox: 'bwrap'
+            os: 'windows-2025'
+
+    defaults:
+      run:
+        shell: "${{ runner.os == 'Windows' && 'wsl-bash {0}' || 'bash' }}"
 
     steps:
       - name: 'Checkout'
         uses: 'actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955' # ratchet:actions/checkout@v5
 
+      - name: 'Setup WSL2'
+        if: "runner.os == 'Windows'"
+        uses: 'Vampire/setup-wsl@6a8db447be7ed35f2f499c02c6e60ff77ef11278' # ratchet:Vampire/setup-wsl@v6
+        with:
+          distribution: 'Ubuntu-24.04'
+          additional-packages: 'bubblewrap'
+
+      - name: 'Install Node.js 20 in WSL'
+        if: "runner.os == 'Windows'"
+        run: |
+          curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+          sudo apt-get install -y nodejs
+
       - name: 'Set up Node.js 20.x'
+        if: "runner.os != 'Windows'"
         uses: 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020' # ratchet:actions-node@v4
         with:
           node-version: '20.x'
 
       - name: 'Enable unprivileged user namespaces (bwrap)'
-        if: "matrix.sandbox == 'bwrap'"
+        if: "matrix.sandbox == 'bwrap' && runner.os != 'Windows'"
         run: |
           # Ubuntu 24.04 restricts unprivileged user namespaces via AppArmor.
           # bwrap needs them to set up uid/gid maps.
@@ -58,7 +78,7 @@ jobs:
             || { echo "::error::Could not enable unprivileged user namespaces"; exit 1; }
 
       - name: 'Install bubblewrap'
-        if: "matrix.sandbox == 'bwrap'"
+        if: "matrix.sandbox == 'bwrap' && runner.os != 'Windows'"
         run: 'sudo apt-get install -y bubblewrap'
 
       - name: 'Set up Landlock'
@@ -104,8 +124,8 @@ jobs:
       - name: 'Build project'
         run: 'npm run build'
 
-      - name: 'Run sandbox unit tests (Linux)'
-        if: "runner.os == 'Linux'"
+      - name: 'Run sandbox unit tests (Linux / Windows)'
+        if: "runner.os == 'Linux' || runner.os == 'Windows'"
         run: |
           npx vitest run \
             packages/cli/src/utils/sandbox.test.ts \
@@ -127,7 +147,7 @@ jobs:
           KEEP_OUTPUT: 'true'
           VERBOSE: 'true'
           GEMINI_TELEMETRY_ENABLED: 'true'
-          GEMINI_TELEMETRY_OUTFILE: '${{ github.workspace }}/telemetry.json'
+          GEMINI_TELEMETRY_OUTFILE: "${{ runner.os == 'Windows' && '/tmp/telemetry.json' || format('{0}/telemetry.json', github.workspace) }}"
         run: 'npm run test:integration:sandbox:${{ matrix.sandbox }} -- sandbox-verification.test.ts'
 
   sandbox-summary:
