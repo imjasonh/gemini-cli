@@ -54,7 +54,7 @@ jobs:
         uses: 'Vampire/setup-wsl@6a8db447be7ed35f2f499c02c6e60ff77ef11278' # ratchet:Vampire/setup-wsl@v6
         with:
           distribution: 'Ubuntu-24.04'
-          additional-packages: 'bubblewrap'
+          additional-packages: 'bubblewrap build-essential'
 
       - name: 'Install Node.js 20 in WSL'
         if: "runner.os == 'Windows'"

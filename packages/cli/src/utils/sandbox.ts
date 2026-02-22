@@ -1808,6 +1808,25 @@ async function startLandlockSandbox(
     }
   }
 
+  // Filter PATH to only include directories accessible inside the sandbox.
+  // Landlock returns EACCES for non-allowed paths (unlike bwrap which returns
+  // ENOENT for non-mounted paths). Some execvp implementations record EACCES
+  // from early PATH entries and return it even if a later entry succeeds,
+  // causing "spawn bash EACCES" failures.
+  const allowedBasePaths = [
+    ...profile.rxPaths,
+    ...profile.rwPaths,
+    ...profile.roPaths,
+  ];
+  if (sandboxEnv['PATH']) {
+    sandboxEnv['PATH'] = sandboxEnv['PATH']
+      .split(':')
+      .filter((dir) =>
+        allowedBasePaths.some((p) => dir === p || dir.startsWith(p + '/')),
+      )
+      .join(':');
+  }
+
   // NODE_OPTIONS
   const existingNodeOptions = process.env['NODE_OPTIONS'] || '';
   const allNodeOptions = [
