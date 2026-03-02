@@ -95,4 +95,12 @@ if (existsSync(devtoolsDistSrc)) {
   console.log('Copied devtools package to bundle/node_modules/');
 }
 
+// 6. Copy landlock .node files (Linux only)
+const landlockNodeFiles = glob.sync('packages/landlock/*.node', { cwd: root });
+for (const file of landlockNodeFiles) {
+  const dest = join(bundleDir, basename(file));
+  copyFileSync(join(root, file), dest);
+  console.log(`Copied ${basename(file)} to bundle/`);
+}
+
 console.log('Assets copied to bundle/');
