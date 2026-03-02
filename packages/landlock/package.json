@@ -26,8 +26,8 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "napi build --platform --release --strip",
-    "build:debug": "napi build --platform"
+    "build": "node -e \"if(process.platform!=='linux'){console.log('Skipping: not Linux');process.exit(0)}\" && napi build --platform --release --strip",
+    "build:debug": "node -e \"if(process.platform!=='linux'){console.log('Skipping: not Linux');process.exit(0)}\" && napi build --platform"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.0.0"
