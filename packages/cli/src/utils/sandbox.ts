@@ -33,7 +33,6 @@ import {
   BUILTIN_SEATBELT_PROFILES,
   DEFAULT_BWRAP_PROFILE,
   isWSL,
-  getLandlockHelperPath,
 } from './sandboxUtils.js';
 import { buildBwrapProfile, BUILTIN_BWRAP_PROFILES } from './bwrapProfiles.js';
 import {
@@ -1688,48 +1687,28 @@ async function startLandlockSandbox(
     debugLogger.log('seccomp filter enabled');
   }
 
-  const args: string[] = [];
-
-  // Read-only paths
-  for (const p of profile.roPaths) {
-    if (fs.existsSync(p)) {
-      args.push('--ro', p);
-    }
-  }
-
-  // Read-write paths
+  // Ensure read-write paths exist
   for (const p of profile.rwPaths) {
     if (!fs.existsSync(p)) {
       fs.mkdirSync(p, { recursive: true });
     }
-    args.push('--rw', p);
   }
 
-  // Read+execute paths (system dirs)
-  for (const p of profile.rxPaths) {
-    if (fs.existsSync(p)) {
-      args.push('--rx', p);
-    }
-  }
-
-  // Ensure the CLI entry script directory is accessible inside the sandbox.
+  // Ensure the CLI entry script directory is accessible inside the sandbox
+  const allAccessPaths = [
+    ...profile.rxPaths,
+    ...profile.rwPaths,
+    ...profile.roPaths,
+  ];
   if (cliArgs.length >= 2 && fs.existsSync(cliArgs[1])) {
     const scriptDir = path.dirname(fs.realpathSync(cliArgs[1]));
-    const allPaths = [
-      ...profile.rxPaths,
-      ...profile.rwPaths,
-      ...profile.roPaths,
-    ];
     if (
-      !allPaths.some((p) => scriptDir === p || scriptDir.startsWith(p + '/'))
+      !allAccessPaths.some(
+        (p) => scriptDir === p || scriptDir.startsWith(p + '/'),
+      )
     ) {
-      args.push('--rx', scriptDir);
+      profile.rxPaths.push(scriptDir);
     }
-  }
-
-  // Seccomp filter via file path
-  if (seccomp) {
-    args.push('--seccomp', seccomp.path);
   }
 
   // Proxy support (host-side, like bwrap/seatbelt)
@@ -1762,9 +1741,6 @@ async function startLandlockSandbox(
       'until timeout 0.25 curl -s http://localhost:8877; do sleep 0.25; done',
     );
   }
-
-  // The command to run inside the landlock sandbox
-  args.push('--', ...cliArgs);
 
   // Environment: Landlock doesn't use namespaces, so env is inherited naturally.
   // Set SANDBOX=landlock and forward proxy env vars.
@@ -1838,14 +1814,24 @@ async function startLandlockSandbox(
     sandboxEnv['NODE_OPTIONS'] = allNodeOptions;
   }
 
-  // Spawn landlock-helper
-  const helperPath = getLandlockHelperPath();
-  if (!helperPath) {
-    throw new FatalSandboxError('landlock-helper binary not found');
+  // Apply Landlock sandbox to the current process using native module
+  try {
+    const { applyLandlock } = await import('@google/gemini-cli-landlock');
+    applyLandlock({
+      roPaths: profile.roPaths,
+      rwPaths: profile.rwPaths,
+      rxPaths: profile.rxPaths,
+      seccompFilterPath: seccomp?.path,
+    });
+    debugLogger.log('landlock sandbox applied to current process');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new FatalSandboxError(`Failed to apply landlock: ${message}`);
   }
 
+  // Now spawn the command (it inherits the sandbox from this process)
   process.stdin.pause();
-  const sandboxProcess = spawn(helperPath, args, {
+  const sandboxProcess = spawn(cliArgs[0], cliArgs.slice(1), {
     stdio: 'inherit',
     env: sandboxEnv,
   });
@@ -1854,7 +1840,7 @@ async function startLandlockSandbox(
   if (proxyProcess) {
     proxyProcess.on('close', (code, signal) => {
       if (sandboxProcess.pid) {
-        process.kill(-sandboxProcess.pid, 'SIGTERM');
+        process.kill(sandboxProcess.pid, 'SIGTERM');
       }
       throw new FatalSandboxError(
         `Proxy command '${proxyCommand}' exited with code ${code}, signal ${signal}`,

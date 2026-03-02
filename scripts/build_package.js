@@ -35,36 +35,16 @@ execSync('tsc --build', { stdio: 'inherit' });
 // copy .{md,json} files
 execSync('node ../../scripts/copy_files.js', { stdio: 'inherit' });
 
-// Build native components if present (e.g. landlock-helper on Linux)
-const nativeDir = join(process.cwd(), 'native');
-if (os.platform() === 'linux' && existsSync(join(nativeDir, 'Makefile'))) {
-  console.log('Building native components...');
-  try {
-    execSync('which x86_64-linux-gnu-gcc');
-    execSync('which aarch64-linux-gnu-gcc');
-    execSync('make cross', { stdio: 'inherit', cwd: nativeDir });
-    if (existsSync(join(nativeDir, 'landlock-helper-amd64'))) {
-      cpSync(
-        join(nativeDir, 'landlock-helper-amd64'),
-        join(process.cwd(), 'dist', 'landlock-helper-amd64'),
-      );
-    }
-    if (existsSync(join(nativeDir, 'landlock-helper-arm64'))) {
-      cpSync(
-        join(nativeDir, 'landlock-helper-arm64'),
-        join(process.cwd(), 'dist', 'landlock-helper-arm64'),
-      );
-    }
-  } catch (_e) {
-    console.log('Cross-compilation failed, falling back to native build...');
-  }
-  execSync('make', { stdio: 'inherit', cwd: nativeDir });
-  // Copy artifact to dist so it's included in the package
-  if (existsSync(join(nativeDir, 'landlock-helper'))) {
-    cpSync(
-      join(nativeDir, 'landlock-helper'),
-      join(process.cwd(), 'dist', 'landlock-helper'),
-    );
+// Build Rust N-API module for landlock package
+if (
+  packageName === 'landlock' &&
+  existsSync(join(process.cwd(), 'Cargo.toml'))
+) {
+  console.log('Building Rust N-API module...');
+  if (os.platform() === 'linux') {
+    execSync('npm run build', { stdio: 'inherit' });
+  } else {
+    console.log('Skipping Rust build on non-Linux platform');
   }
 }
 

@@ -12,12 +12,6 @@ import { promisify } from 'node:util';
 import { quote } from 'shell-quote';
 import { debugLogger, GEMINI_DIR } from '@google/gemini-cli-core';
 import commandExists from 'command-exists';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 const execFileAsync = promisify(execFile);
 
 export const LOCAL_DEV_SANDBOX_IMAGE_NAME = 'gemini-cli-sandbox';
@@ -352,96 +346,21 @@ export async function isLandlockAvailable(): Promise<boolean> {
     return false;
   }
 
-  // Check kernel version >= 5.13
   try {
-    const release = os.release(); // e.g. "6.1.0-21-amd64"
-    const [majorStr, minorStr] = release.split('.');
-    const major = parseInt(majorStr ?? '0', 10);
-    const minor = parseInt(minorStr ?? '0', 10);
-    if (major < 5 || (major === 5 && minor < 13)) {
+    const { checkLandlock } = await import('@google/gemini-cli-landlock');
+    const info = checkLandlock();
+    if (!info.available) {
       debugLogger.log(
-        `isLandlockAvailable: kernel ${release} is older than 5.13, Landlock not supported`,
+        `isLandlockAvailable: ${info.error || 'Landlock not available'}`,
       );
       return false;
     }
-  } catch (err) {
-    debugLogger.warn(
-      `isLandlockAvailable: failed to parse kernel version: ${err}`,
-    );
-    return false;
-  }
-
-  // Check that Landlock LSM is loaded by reading the active LSM list.
-  // We read /sys/kernel/security/lsm instead of checking for the
-  // /sys/kernel/security/landlock/ directory, because some kernels (e.g.
-  // Azure-tuned) enable Landlock syscalls without exposing the securityfs
-  // directory.
-  try {
-    const lsmList = await readFile('/sys/kernel/security/lsm', 'utf8');
-    if (!lsmList.split(',').some((m) => m.trim() === 'landlock')) {
-      debugLogger.log(
-        `isLandlockAvailable: 'landlock' not found in LSM list: ${lsmList.trim()}`,
-      );
-      return false;
-    }
+    debugLogger.log(`isLandlockAvailable: detected ABI v${info.abiVersion}`);
+    return true;
   } catch (err) {
     debugLogger.log(
-      `isLandlockAvailable: cannot read /sys/kernel/security/lsm: ${err}`,
+      `isLandlockAvailable: failed to load native module: ${err}`,
     );
     return false;
   }
-
-  // Check that the landlock-helper binary is available
-  if (!getLandlockHelperPath()) {
-    debugLogger.log(`isLandlockAvailable: 'landlock-helper' binary not found`);
-    return false;
-  }
-
-  return true;
-}
-
-export function getLandlockHelperPath(): string | null {
-  const archSuffix =
-    process.arch === 'arm64'
-      ? '-arm64'
-      : process.arch === 'x64'
-        ? '-amd64'
-        : '';
-
-  const possiblePaths = [
-    // 1. Bundled binary (bundle/landlock-helper)
-    path.join(__dirname, `landlock-helper${archSuffix}`),
-    path.join(__dirname, 'landlock-helper'),
-    // 2. Dist binary (dist/utils/../landlock-helper)
-    path.join(__dirname, '..', `landlock-helper${archSuffix}`),
-    path.join(__dirname, '..', 'landlock-helper'),
-    // 3. Dev binary relative to source (src/utils/../../native/landlock-helper)
-    path.join(__dirname, '..', '..', 'native', `landlock-helper${archSuffix}`),
-    path.join(__dirname, '..', '..', 'native', 'landlock-helper'),
-    // 4. Dev binary relative to CWD (useful for tests running from repo root)
-    path.join(
-      process.cwd(),
-      'packages',
-      'cli',
-      'native',
-      `landlock-helper${archSuffix}`,
-    ),
-    path.join(process.cwd(), 'packages', 'cli', 'native', 'landlock-helper'),
-  ];
-
-  for (const p of possiblePaths) {
-    if (fs.existsSync(p)) {
-      return p;
-    }
-  }
-
-  // Check PATH as fallback
-  if (archSuffix && commandExists.sync(`landlock-helper${archSuffix}`)) {
-    return `landlock-helper${archSuffix}`;
-  }
-  if (commandExists.sync('landlock-helper')) {
-    return 'landlock-helper';
-  }
-
-  return null;
 }
