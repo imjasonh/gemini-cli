@@ -53,6 +53,11 @@ function loadBinding() {
     throw new Error(`Failed to load native binding for ${platform}-${arch}`);
   }
 
+  // Debug: log what the binding exports
+  console.error('Native binding keys:', Object.keys(nativeBinding));
+  console.error('checkLandlock type:', typeof nativeBinding.checkLandlock);
+  console.error('check_landlock type:', typeof nativeBinding.check_landlock);
+
   return nativeBinding;
 }
 

@@ -9,12 +9,12 @@ repository = "https://github.com/google-gemini/gemini-cli"
 crate-type = ["cdylib"]
 
 [dependencies]
-napi = "2"
-napi-derive = "2"
+napi = "3"
+napi-derive = "3"
 libc = "0.2"
 
 [build-dependencies]
-napi-build = "2"
+napi-build = "3"
 
 [profile.release]
 lto = true
