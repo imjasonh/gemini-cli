@@ -38,8 +38,14 @@ vi.mock('@google/gemini-cli-core', () => ({
   debugLogger: {
     log: vi.fn(),
     warn: vi.fn(),
+    debug: vi.fn(),
   },
   GEMINI_DIR: '.gemini',
+}));
+
+vi.mock('@google/gemini-cli-landlock', () => ({
+  checkLandlock: vi.fn(),
+  applyLandlock: vi.fn(),
 }));
 
 // Mock execFile used by isMacOSContainerAvailable via promisify
@@ -48,10 +54,12 @@ vi.mock('node:child_process', () => ({
 }));
 
 import { execFile } from 'node:child_process';
+import { checkLandlock } from '@google/gemini-cli-landlock';
 
 const mockedExecFile = vi.mocked(execFile);
 const mockedCommandExistsSync = vi.mocked(commandExists.sync);
 const mockedReadFile = vi.mocked(readFile);
+const mockedCheckLandlock = vi.mocked(checkLandlock);
 
 describe('sandboxUtils', () => {
   const originalEnv = process.env;
@@ -453,6 +461,11 @@ describe('sandboxUtils', () => {
         'lockdown,capability,landlock,yama,apparmor\n',
       );
       mockedCommandExistsSync.mockReturnValue(true);
+      mockedCheckLandlock.mockReturnValue({
+        available: true,
+        abiVersion: 3,
+        error: undefined,
+      });
     });
 
     it('should return false on non-Linux', async () => {
@@ -471,26 +484,50 @@ describe('sandboxUtils', () => {
 
     it('should return false on Linux 5.12 (too old)', async () => {
       vi.mocked(os.release).mockReturnValue('5.12.0-1-generic');
+      mockedCheckLandlock.mockReturnValue({
+        available: false,
+        abiVersion: 0,
+        error: 'Landlock not supported',
+      });
       expect(await isLandlockAvailable()).toBe(false);
     });
 
     it('should return false on Linux 4.x', async () => {
       vi.mocked(os.release).mockReturnValue('4.19.0-1-amd64');
+      mockedCheckLandlock.mockReturnValue({
+        available: false,
+        abiVersion: 0,
+        error: 'Landlock not supported',
+      });
       expect(await isLandlockAvailable()).toBe(false);
     });
 
     it('should return false when landlock is not in LSM list', async () => {
       mockedReadFile.mockResolvedValue('lockdown,capability,yama,apparmor\n');
+      mockedCheckLandlock.mockReturnValue({
+        available: false,
+        abiVersion: 0,
+        error: 'Landlock not supported',
+      });
       expect(await isLandlockAvailable()).toBe(false);
     });
 
     it('should return false when /sys/kernel/security/lsm is not readable', async () => {
       mockedReadFile.mockRejectedValue(new Error('ENOENT'));
+      mockedCheckLandlock.mockReturnValue({
+        available: false,
+        abiVersion: 0,
+        error: 'Landlock not supported',
+      });
       expect(await isLandlockAvailable()).toBe(false);
     });
 
-    it('should return false when landlock-helper binary is not found', async () => {
-      mockedCommandExistsSync.mockReturnValue(false);
+    it('should return false when landlock native module is not available', async () => {
+      mockedCheckLandlock.mockReturnValue({
+        available: false,
+        abiVersion: 0,
+        error: 'Landlock not supported',
+      });
       expect(await isLandlockAvailable()).toBe(false);
     });
   });

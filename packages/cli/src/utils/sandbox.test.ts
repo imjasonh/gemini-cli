@@ -15,15 +15,14 @@ import { EventEmitter } from 'node:events';
 const {
   mockedHomedir,
   mockedGetContainerPath,
-  mockedGetLandlockHelperPath,
   mockedPrepareSeccompFd,
   mockedCleanupSeccomp,
   mockedPrepareSeccompFile,
   mockedCleanupSeccompFile,
+  mockedApplyLandlock,
 } = vi.hoisted(() => ({
   mockedHomedir: vi.fn().mockReturnValue('/home/user'),
   mockedGetContainerPath: vi.fn().mockImplementation((p: string) => p),
-  mockedGetLandlockHelperPath: vi.fn().mockReturnValue('landlock-helper'),
   mockedPrepareSeccompFd: vi
     .fn()
     .mockReturnValue({ fd: 99, path: '/tmp/bwrap-seccomp-test.bpf' }),
@@ -32,6 +31,7 @@ const {
     .fn()
     .mockReturnValue({ path: '/tmp/seccomp-test.bpf' }),
   mockedCleanupSeccompFile: vi.fn(),
+  mockedApplyLandlock: vi.fn(),
 }));
 
 vi.mock('./sandboxUtils.js', async (importOriginal) => {
@@ -39,9 +39,13 @@ vi.mock('./sandboxUtils.js', async (importOriginal) => {
   return {
     ...actual,
     getContainerPath: mockedGetContainerPath,
-    getLandlockHelperPath: mockedGetLandlockHelperPath,
   };
 });
+
+vi.mock('@google/gemini-cli-landlock', () => ({
+  checkLandlock: vi.fn(),
+  applyLandlock: mockedApplyLandlock,
+}));
 
 vi.mock('./bwrap-seccomp.js', () => ({
   prepareSeccompFd: mockedPrepareSeccompFd,
@@ -1241,7 +1245,7 @@ describe('sandbox', () => {
     });
 
     describe('Landlock sandbox', () => {
-      it('should route landlock to landlock-helper with correct args', async () => {
+      it('should apply landlock and spawn command directly', async () => {
         vi.mocked(os.platform).mockReturnValue('linux');
         const config: SandboxConfig = {
           command: 'landlock',
@@ -1270,19 +1274,17 @@ describe('sandbox', () => {
         }, 10);
 
         await expect(promise).resolves.toBe(0);
+        expect(mockedApplyLandlock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            roPaths: expect.any(Array),
+            rwPaths: expect.any(Array),
+            rxPaths: expect.any(Array),
+            seccompFilterPath: '/tmp/seccomp-test.bpf',
+          }),
+        );
         expect(spawn).toHaveBeenCalledWith(
-          'landlock-helper',
-          expect.arrayContaining([
-            '--ro',
-            '--rw',
-            '--rx',
-            '--seccomp',
-            '/tmp/seccomp-test.bpf',
-            '--',
-            'gemini',
-            '--prompt',
-            'hello',
-          ]),
+          'gemini',
+          ['--prompt', 'hello'],
           expect.objectContaining({
             stdio: 'inherit',
             env: expect.objectContaining({ SANDBOX: 'landlock' }),
@@ -1290,7 +1292,7 @@ describe('sandbox', () => {
         );
       });
 
-      it('should include --seccomp when seccomp is enabled', async () => {
+      it('should pass seccomp filter path when seccomp is enabled', async () => {
         vi.mocked(os.platform).mockReturnValue('linux');
         const config: SandboxConfig = {
           command: 'landlock',
@@ -1315,9 +1317,11 @@ describe('sandbox', () => {
         }, 10);
 
         await expect(promise).resolves.toBe(0);
-        const landlockArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
-        expect(landlockArgs).toContain('--seccomp');
-        expect(landlockArgs).toContain('/tmp/seccomp-test.bpf');
+        expect(mockedApplyLandlock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            seccompFilterPath: '/tmp/seccomp-test.bpf',
+          }),
+        );
       });
 
       it('should not include --seccomp when seccomp is disabled', async () => {
@@ -1405,9 +1409,10 @@ describe('sandbox', () => {
         }, 10);
 
         await expect(promise).resolves.toBe(0);
+        expect(mockedApplyLandlock).toHaveBeenCalled();
         expect(spawn).toHaveBeenCalledWith(
-          'landlock-helper',
-          expect.any(Array),
+          'gemini',
+          [],
           expect.objectContaining({
             env: expect.objectContaining({ SANDBOX: 'landlock' }),
           }),
@@ -1468,7 +1473,7 @@ describe('sandbox', () => {
         await expect(start_sandbox(config)).rejects.toThrow(FatalSandboxError);
       });
 
-      it('should add --rx for CLI entry script directory', async () => {
+      it('should add rxPaths for CLI entry script directory', async () => {
         vi.mocked(os.platform).mockReturnValue('linux');
         const config: SandboxConfig = {
           command: 'landlock',
@@ -1499,18 +1504,15 @@ describe('sandbox', () => {
         }, 10);
 
         await expect(promise).resolves.toBe(0);
-        const landlockArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
-        // The script dir /opt/custom/bundle should have --rx access
-        const rxPaths: string[] = [];
-        for (let i = 0; i < landlockArgs.length; i++) {
-          if (landlockArgs[i] === '--rx') {
-            rxPaths.push(landlockArgs[i + 1]);
-          }
-        }
-        expect(rxPaths).toContain('/opt/custom/bundle');
+        // The script dir /opt/custom/bundle should have rx access
+        expect(mockedApplyLandlock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            rxPaths: expect.arrayContaining(['/opt/custom/bundle']),
+          }),
+        );
       });
 
-      it('should pass cliArgs after -- separator', async () => {
+      it('should pass cliArgs directly to spawn', async () => {
         vi.mocked(os.platform).mockReturnValue('linux');
         const config: SandboxConfig = {
           command: 'landlock',
@@ -1540,14 +1542,11 @@ describe('sandbox', () => {
 
         await expect(promise).resolves.toBe(0);
 
-        const landlockArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
-        const separatorIdx = landlockArgs.indexOf('--');
-        expect(separatorIdx).toBeGreaterThan(-1);
-        expect(landlockArgs.slice(separatorIdx + 1)).toEqual([
+        expect(spawn).toHaveBeenCalledWith(
           'gemini',
-          '--prompt',
-          'test',
-        ]);
+          ['--prompt', 'test'],
+          expect.any(Object),
+        );
       });
     });
   });
