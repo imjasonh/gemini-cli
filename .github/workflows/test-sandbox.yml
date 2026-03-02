@@ -81,14 +81,15 @@ jobs:
         if: "matrix.sandbox == 'bwrap' && runner.os != 'Windows'"
         run: 'sudo apt-get install -y bubblewrap'
 
+      - name: 'Set up Rust'
+        if: "matrix.sandbox == 'landlock'"
+        uses: 'actions-rust-lang/setup-rust-toolchain@11df97af8e8102fd60b60a77dfbf58d40cd843b8' # ratchet:actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 'stable'
+
       - name: 'Set up Landlock'
         if: "matrix.sandbox == 'landlock'"
         run: |
-          # Build and install landlock-helper
-          cd packages/cli/native
-          make
-          sudo install -m 755 landlock-helper /usr/local/bin/landlock-helper
-
           # Ensure securityfs is mounted
           if [ ! -d /sys/kernel/security ]; then
             sudo mount -t securityfs securityfs /sys/kernel/security
@@ -102,13 +103,6 @@ jobs:
           # Verify Landlock LSM is loaded
           if ! echo "${LSM_LIST}" | grep -qw landlock; then
             echo "::error::Landlock LSM is not available on this runner (kernel $(uname -r)). LSMs: ${LSM_LIST}"
-            exit 1
-          fi
-
-          # Smoke-test: landlock-helper should detect a positive ABI version
-          ABI=$(/usr/local/bin/landlock-helper --ro /tmp -- /bin/true 2>&1 && echo "ok" || echo "fail")
-          if [ "$ABI" = "fail" ]; then
-            echo "::error::landlock-helper smoke test failed"
             exit 1
           fi
 
