@@ -43,6 +43,10 @@ vi.mock('./sandboxUtils.js', async (importOriginal) => {
 });
 
 vi.mock('@google/gemini-cli-landlock', () => ({
+  default: {
+    checkLandlock: vi.fn(),
+    applyLandlock: mockedApplyLandlock,
+  },
   checkLandlock: vi.fn(),
   applyLandlock: mockedApplyLandlock,
 }));

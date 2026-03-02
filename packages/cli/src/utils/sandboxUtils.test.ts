@@ -34,6 +34,10 @@ vi.mock('command-exists', () => {
     default: { sync },
   };
 });
+const { mockedCheckLandlock } = vi.hoisted(() => ({
+  mockedCheckLandlock: vi.fn(),
+}));
+
 vi.mock('@google/gemini-cli-core', () => ({
   debugLogger: {
     log: vi.fn(),
@@ -44,7 +48,11 @@ vi.mock('@google/gemini-cli-core', () => ({
 }));
 
 vi.mock('@google/gemini-cli-landlock', () => ({
-  checkLandlock: vi.fn(),
+  default: {
+    checkLandlock: mockedCheckLandlock,
+    applyLandlock: vi.fn(),
+  },
+  checkLandlock: mockedCheckLandlock,
   applyLandlock: vi.fn(),
 }));
 
@@ -54,12 +62,10 @@ vi.mock('node:child_process', () => ({
 }));
 
 import { execFile } from 'node:child_process';
-import { checkLandlock } from '@google/gemini-cli-landlock';
 
 const mockedExecFile = vi.mocked(execFile);
 const mockedCommandExistsSync = vi.mocked(commandExists.sync);
 const mockedReadFile = vi.mocked(readFile);
-const mockedCheckLandlock = vi.mocked(checkLandlock);
 
 describe('sandboxUtils', () => {
   const originalEnv = process.env;
