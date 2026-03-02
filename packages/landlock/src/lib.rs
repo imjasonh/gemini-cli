@@ -13,8 +13,8 @@ use napi_derive::napi;
 
 #[cfg(target_os = "linux")]
 use landlock::{
-    path_beneath_rules, Access, AccessFs, Compatible, Ruleset, RulesetAttr, RulesetCreatedAttr,
-    RulesetStatus, ABI,
+    path_beneath_rules, Access, AccessFs, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus,
+    ABI,
 };
 
 /// Information about Landlock availability and capabilities
