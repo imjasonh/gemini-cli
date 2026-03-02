@@ -13,6 +13,9 @@ napi = "2"
 napi-derive = "2"
 libc = "0.2"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4"
+
 [build-dependencies]
 napi-build = "2"
 
