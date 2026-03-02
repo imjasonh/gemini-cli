@@ -1816,7 +1816,8 @@ async function startLandlockSandbox(
 
   // Apply Landlock sandbox to the current process using native module
   try {
-    const { applyLandlock } = await import('@google/gemini-cli-landlock');
+    const landlock = await import('@google/gemini-cli-landlock');
+    const { applyLandlock } = landlock.default || landlock;
     applyLandlock({
       roPaths: profile.roPaths,
       rwPaths: profile.rwPaths,

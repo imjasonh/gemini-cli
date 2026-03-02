@@ -347,7 +347,8 @@ export async function isLandlockAvailable(): Promise<boolean> {
   }
 
   try {
-    const { checkLandlock } = await import('@google/gemini-cli-landlock');
+    const landlock = await import('@google/gemini-cli-landlock');
+    const { checkLandlock } = landlock.default || landlock;
     const info = checkLandlock();
     if (!info.available) {
       debugLogger.log(
