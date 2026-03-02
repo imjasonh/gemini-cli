@@ -18,7 +18,7 @@
 // limitations under the License.
 
 import { execSync } from 'node:child_process';
-import { writeFileSync, existsSync, cpSync } from 'node:fs';
+import { writeFileSync, existsSync, cpSync, readdirSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import os from 'node:os';
 
@@ -43,6 +43,11 @@ if (
   console.log('Building Rust N-API module...');
   if (os.platform() === 'linux') {
     execSync('npm run build', { stdio: 'inherit' });
+    // Log what .node files were created
+    const nodeFiles = readdirSync(process.cwd()).filter((f) =>
+      f.endsWith('.node'),
+    );
+    console.log('Built .node files:', nodeFiles);
   } else {
     console.log('Skipping Rust build on non-Linux platform');
   }
