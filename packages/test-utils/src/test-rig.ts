@@ -1193,46 +1193,18 @@ export class TestRig {
 
     const content = readFileSync(logFilePath, 'utf-8');
 
-    // Parse pretty-printed JSON objects by tracking brace depth. This
-    // handles nested objects, braces inside strings, and unusual line
-    // endings (e.g. WSL).
+    // Telemetry is NDJSON — one JSON object per line.
     const logs: ParsedLog[] = [];
-    let current = '';
-    let depth = 0;
-    let inString = false;
-    let escape = false;
 
-    for (const char of content) {
-      current += char;
-      if (escape) {
-        escape = false;
-        continue;
-      }
-      if (char === '\\' && inString) {
-        escape = true;
-        continue;
-      }
-      if (char === '"') {
-        inString = !inString;
-        continue;
-      }
-      if (!inString) {
-        if (char === '{') depth++;
-        else if (char === '}') {
-          depth--;
-          if (depth === 0) {
-            try {
-              logs.push(JSON.parse(current));
-            } catch {
-              if (env['VERBOSE'] === 'true') {
-                console.error(
-                  'Failed to parse telemetry object:',
-                  current.slice(0, 200),
-                );
-              }
-            }
-            current = '';
-          }
+    for (const line of content.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        logs.push(JSON.parse(trimmed));
+      } catch (e) {
+        // Skip lines that aren't valid JSON
+        if (env['VERBOSE'] === 'true') {
+          console.error('Failed to parse telemetry object:', e);
         }
       }
     }
