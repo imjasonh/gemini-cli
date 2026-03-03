@@ -103,11 +103,17 @@ if (['1', 'true'].includes(geminiSandbox)) {
     process.exit(1);
   }
 } else if (geminiSandbox && !['0', 'false'].includes(geminiSandbox)) {
-  if (commandExists(geminiSandbox)) {
+  // Map sandbox mode names to the actual binary they require.
+  const binaryForMode = {
+    'macos-container': 'container',
+  };
+  const binaryToCheck = binaryForMode[geminiSandbox] || geminiSandbox;
+
+  if (commandExists(binaryToCheck)) {
     command = geminiSandbox;
   } else {
     console.error(
-      `ERROR: missing sandbox command '${geminiSandbox}' (from GEMINI_SANDBOX)`,
+      `ERROR: missing sandbox command '${binaryToCheck}' (from GEMINI_SANDBOX)`,
     );
     process.exit(1);
   }

@@ -31,6 +31,33 @@ The benefits of sandboxing include:
 - **Safety**: Reduce risk when working with untrusted code or experimental
   commands.
 
+## Choosing a sandbox method
+
+| Feature           | sandbox-exec  | macos-container      | docker/podman | bwrap         | landlock      |
+| ----------------- | ------------- | -------------------- | ------------- | ------------- | ------------- |
+| Platform          | macOS         | macOS 26+            | All           | Linux         | Linux 5.13+   |
+| Isolation         | Process       | VM (separate kernel) | Container     | Namespace     | Kernel ACLs   |
+| Startup time      | Fast          | Medium               | Medium        | Fast          | Fast          |
+| Image required    | No            | Yes                  | Yes           | No            | No            |
+| Network isolation | Profile-based | Yes                  | Yes           | Profile-based | Profile-based |
+| Resource overhead | Low           | Medium               | Medium        | Low           | Low           |
+| Security level    | Medium        | Medium-High\*        | Medium        | Medium-High   | Medium-High   |
+
+**Quick guide:**
+
+- **macOS**: `sandbox-exec` is the default. Use `macos-container` for stronger
+  VM-level isolation (requires Apple Silicon, macOS 26+, and the `container`
+  CLI).
+- **Linux**: `landlock` is recommended (auto-detected with `sandbox: true`). Use
+  `bwrap` on older kernels, or `docker`/`podman` for a consistent container
+  environment.
+
+\*`macos-container` runs a separate Linux kernel, which protects the host from
+kernel exploits inside the sandbox. However, the home directory and workspace
+are mounted into the VM, so data exposure is similar to container-based modes.
+The VM boundary provides stronger kernel-level isolation, not stronger data
+isolation.
+
 ## Sandboxing methods
 
 Your ideal method of sandboxing may differ depending on your platform and your
@@ -49,6 +76,88 @@ Cross-platform sandboxing with complete process isolation.
 
 **Note**: Requires building the sandbox image locally or using a published image
 from your organization's registry.
+
+### 3. macOS Container (macOS 26+ only)
+
+VM-level isolation using Apple's Container framework. Each sandbox runs in a
+lightweight Linux VM with its own kernel, providing the strongest available
+isolation.
+
+**Requirements**: macOS 15 (Sequoia) or later, Apple Silicon,
+[`container` CLI](https://github.com/apple/container) installed.
+
+**Enable**:
+
+- `gemini --sandbox=macos-container`
+- `GEMINI_SANDBOX=macos-container`
+- `{"tools": {"sandbox": "macos-container"}}`
+
+**Benefits**:
+
+- Separate kernel from host (protects against kernel exploits in the sandbox)
+- Uses the same sandbox image as Docker/Podman
+- Rosetta support for x86_64 images on Apple Silicon
+
+**Trade-offs**:
+
+- Runs Linux, not macOS (macOS-specific tools like `open`, `pbcopy` are
+  unavailable)
+- Home directory is mounted into the VM (data exposure similar to Docker)
+- Slightly higher startup time and memory usage than Seatbelt
+
+### 4. Bubblewrap (Linux only)
+
+Lightweight namespace-based sandboxing using `bwrap`.
+
+**Requirements**: Linux with user namespace support, `bwrap` binary installed.
+
+**Enable**:
+
+- `gemini --sandbox=bwrap`
+- `GEMINI_SANDBOX=bwrap`
+- `{"tools": {"sandbox": "bwrap"}}`
+
+**Benefits**:
+
+- No container runtime required
+- Fast startup (no image pull needed)
+- Low resource overhead
+- Uses Seccomp filtering for defense-in-depth
+
+### 5. Landlock (Linux, Recommended)
+
+Modern kernel-based sandboxing using Landlock (filesystem) and Seccomp
+(syscalls).
+
+**Requirements**: Linux kernel 5.13 or later.
+
+**Enable**:
+
+- `gemini --sandbox=landlock`
+- `GEMINI_SANDBOX=landlock`
+- `{"tools": {"sandbox": "landlock"}}` (or just `true` for auto-detection)
+
+**Benefits**:
+
+- Built into the kernel (no external dependencies)
+- Strong filesystem isolation without namespaces
+- Defense-in-depth with Seccomp syscall filtering
+- Recommended for modern Linux systems
+
+### Windows (WSL2)
+
+Sandboxing is supported on Windows via WSL2 (Windows Subsystem for Linux 2).
+
+- **WSL2**: All Linux sandbox mechanisms work (`bwrap`, `landlock`, `docker`).
+  WSL2 runs a real Linux kernel, so namespace and seccomp-based sandboxing
+  functions normally.
+- **WSL1**: Sandboxing is automatically skipped because WSL1 lacks the kernel
+  features required for Linux sandboxing.
+
+**Workspace path**: For best results, use a Linux-native filesystem path (e.g.
+`/home/you/project`) rather than a Windows-mounted path (`/mnt/c/...`). NTFS
+paths accessed via 9P may have permission issues with bind mounts and are
+significantly slower for I/O-heavy operations like `npm install`.
 
 ## Quickstart
 
@@ -88,7 +197,8 @@ gemini -p "run the test suite"
 ### Enable sandboxing (in order of precedence)
 
 1. **Command flag**: `-s` or `--sandbox`
-2. **Environment variable**: `GEMINI_SANDBOX=true|docker|podman|sandbox-exec`
+2. **Environment variable**:
+   `GEMINI_SANDBOX=true|docker|podman|sandbox-exec|macos-container|bwrap|landlock`
 3. **Settings file**: `"sandbox": true` in the `tools` object of your
    `settings.json` file (e.g., `{"tools": {"sandbox": true}}`).
 
@@ -102,6 +212,16 @@ Built-in profiles (set via `SEATBELT_PROFILE` env var):
 - `restrictive-proxied`: Strict restrictions, network via proxy
 - `strict-open`: Read and write restrictions, network allowed
 - `strict-proxied`: Read and write restrictions, network via proxy
+
+### Linux profiles (Bubblewrap / Landlock)
+
+Built-in profiles (set via `BWRAP_PROFILE` or `LANDLOCK_PROFILE` env vars):
+
+- `permissive` (default): Write to project/tmp, read-only system, network
+  allowed
+- `permissive-proxied`: Same as permissive, network via proxy
+- `restrictive`: Write to project/tmp only, `~/.gemini` read-only
+- `strict`: Write to project only, minimal system access
 
 ### Custom sandbox flags
 
@@ -204,6 +324,9 @@ gemini -s -p "run shell command: mount | grep workspace"
 - Use the most restrictive profile that allows your work.
 - Container overhead is minimal after first build.
 - GUI applications may not work in sandboxes.
+- `SANDBOX_FLAGS` and `SANDBOX_ENV` are trust-the-user escape hatches: they can
+  weaken sandbox isolation (e.g. mounting extra paths, forwarding credentials).
+  Only set them when you understand the security implications.
 
 ## Related documentation
 

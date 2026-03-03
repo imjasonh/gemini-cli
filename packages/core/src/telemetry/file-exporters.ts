@@ -27,7 +27,7 @@ class FileExporter {
   }
 
   protected serialize(data: unknown): string {
-    return safeJsonStringify(data, 2) + '\n';
+    return safeJsonStringify(data) + '\n';
   }
 
   shutdown(): Promise<void> {

@@ -51,7 +51,7 @@ describe('ACP telemetry', () => {
       fakeResponsesPath: join(import.meta.dirname, SIMPLE_RESPONSE_PATH),
     });
 
-    const telemetryPath = join(rig.homeDir!, 'telemetry.log');
+    const telemetryPath = join(rig.homeDir!, '.gemini', 'telemetry.log');
     const bundlePath = join(import.meta.dirname, '..', 'bundle/gemini.js');
 
     child = spawn(

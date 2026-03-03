@@ -423,7 +423,7 @@ export class TestRig {
 
     // In sandbox mode, use an absolute path for telemetry inside the container
     // The container mounts the test directory at the same path as the host
-    const telemetryPath = join(this.homeDir!, 'telemetry.log'); // Always use home directory for telemetry
+    const telemetryPath = join(this.homeDir!, '.gemini', 'telemetry.log'); // Always use home directory for telemetry
 
     const settings = deepMerge(
       {
@@ -542,6 +542,9 @@ export class TestRig {
         key !== 'GEMINI_DEBUG' &&
         key !== 'GEMINI_CLI_TEST_VAR' &&
         key !== 'GEMINI_CLI_INTEGRATION_TEST' &&
+        key !== 'GEMINI_SANDBOX' &&
+        key !== 'GEMINI_TELEMETRY_ENABLED' &&
+        key !== 'GEMINI_TELEMETRY_OUTFILE' &&
         !key.startsWith('GEMINI_CLI_ACTIVITY_LOG')
       ) {
         delete cleanEnv[key];
@@ -921,7 +924,7 @@ export class TestRig {
 
   async waitForTelemetryReady() {
     // Telemetry is always written to the test directory
-    const logFilePath = join(this.homeDir!, 'telemetry.log');
+    const logFilePath = join(this.homeDir!, '.gemini', 'telemetry.log');
 
     if (!logFilePath) return;
 
@@ -1182,7 +1185,7 @@ export class TestRig {
 
   private _readAndParseTelemetryLog(): ParsedLog[] {
     // Telemetry is always written to the test directory
-    const logFilePath = join(this.homeDir!, 'telemetry.log');
+    const logFilePath = join(this.homeDir!, '.gemini', 'telemetry.log');
 
     if (!logFilePath || !fs.existsSync(logFilePath)) {
       return [];
@@ -1190,26 +1193,16 @@ export class TestRig {
 
     const content = readFileSync(logFilePath, 'utf-8');
 
-    // Split the content into individual JSON objects
-    // They are separated by "}\n{"
-    const jsonObjects = content
-      .split(/}\n{/)
-      .map((obj, index, array) => {
-        // Add back the braces we removed during split
-        if (index > 0) obj = '{' + obj;
-        if (index < array.length - 1) obj = obj + '}';
-        return obj.trim();
-      })
-      .filter((obj) => obj);
-
+    // Telemetry is NDJSON — one JSON object per line.
     const logs: ParsedLog[] = [];
 
-    for (const jsonStr of jsonObjects) {
+    for (const line of content.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
       try {
-        const logData = JSON.parse(jsonStr);
-        logs.push(logData);
+        logs.push(JSON.parse(trimmed));
       } catch (e) {
-        // Skip objects that aren't valid JSON
+        // Skip lines that aren't valid JSON
         if (env['VERBOSE'] === 'true') {
           console.error('Failed to parse telemetry object:', e);
         }
@@ -1224,7 +1217,7 @@ export class TestRig {
     // If not, fall back to parsing from stdout
     if (env['GEMINI_SANDBOX'] === 'podman') {
       // Try reading from file first
-      const logFilePath = join(this.homeDir!, 'telemetry.log');
+      const logFilePath = join(this.homeDir!, '.gemini', 'telemetry.log');
 
       if (fs.existsSync(logFilePath)) {
         try {

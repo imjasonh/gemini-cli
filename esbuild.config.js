@@ -64,6 +64,7 @@ const external = [
   '@lydell/node-pty-win32-x64',
   'keytar',
   '@google/gemini-cli-devtools',
+  '@google/gemini-cli-landlock',
 ];
 
 const baseConfig = {

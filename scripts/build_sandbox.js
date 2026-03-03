@@ -50,6 +50,12 @@ const argv = yargs(hideBin(process.argv))
     default: cliPkgJson.config.sandboxImageUri,
     description: 'use <image> name for custom image',
   })
+  .option('p', {
+    alias: 'pack-only',
+    type: 'boolean',
+    default: false,
+    description: 'exit after npm pack (skip docker build)',
+  })
   .option('output-file', {
     type: 'string',
     description:
@@ -123,6 +129,11 @@ chmodSync(
   0o755,
 );
 
+if (argv.p) {
+  console.log('--pack-only: skipping docker build');
+  process.exit(0);
+}
+
 const buildStdout = process.env.VERBOSE ? 'inherit' : 'ignore';
 
 // Determine the appropriate shell based on OS
@@ -157,12 +168,20 @@ function buildImage(imageName, dockerfile) {
   const finalImageName = `${imageName.split(':')[0]}:${imageTag}`;
 
   try {
-    execSync(
-      `${sandboxCommand} build ${buildCommandArgs} ${
-        process.env.BUILD_SANDBOX_FLAGS || ''
-      } --build-arg CLI_VERSION_ARG=${npmPackageVersion} -f "${dockerfile}" -t "${finalImageName}" .`,
-      { stdio: buildStdout, shell: shellToUse },
-    );
+    if (sandboxCommand === 'macos-container') {
+      // Apple's `container` CLI uses `container build` syntax.
+      execSync(
+        `container build --build-arg CLI_VERSION_ARG=${npmPackageVersion} -f "${dockerfile}" -t "${finalImageName}" .`,
+        { stdio: buildStdout, shell: shellToUse },
+      );
+    } else {
+      execSync(
+        `${sandboxCommand} build ${buildCommandArgs} ${
+          process.env.BUILD_SANDBOX_FLAGS || ''
+        } --build-arg CLI_VERSION_ARG=${npmPackageVersion} -f "${dockerfile}" -t "${finalImageName}" .`,
+        { stdio: buildStdout, shell: shellToUse },
+      );
+    }
     console.log(`built ${finalImageName}`);
 
     // If an output file path was provided via command-line, write the final image URI to it.
@@ -189,4 +208,6 @@ function buildImage(imageName, dockerfile) {
 
 buildImage(image, dockerFile);
 
-execSync(`${sandboxCommand} image prune -f`, { stdio: 'ignore' });
+if (sandboxCommand !== 'macos-container') {
+  execSync(`${sandboxCommand} image prune -f`, { stdio: 'ignore' });
+}

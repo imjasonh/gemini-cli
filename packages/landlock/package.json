@@ -1,0 +1,35 @@
+{
+  "name": "@google/gemini-cli-landlock",
+  "version": "0.30.0",
+  "description": "Landlock sandbox native module for Gemini CLI",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/google-gemini/gemini-cli.git"
+  },
+  "type": "commonjs",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "*.node"
+  ],
+  "napi": {
+    "binaryName": "gemini-cli-landlock",
+    "targets": [
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu"
+    ]
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node -e \"if(process.platform!=='linux'||require('fs').readFileSync('/proc/version','utf8').toLowerCase().includes('microsoft')){console.log('Skipping landlock build: not native Linux');process.exit(0)}process.exit(1)\" || napi build --platform --release --strip",
+    "build:debug": "node -e \"if(process.platform!=='linux'||require('fs').readFileSync('/proc/version','utf8').toLowerCase().includes('microsoft')){console.log('Skipping landlock build: not native Linux');process.exit(0)}process.exit(1)\" || napi build --platform"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.0.0"
+  }
+}
