@@ -1194,9 +1194,9 @@ export class TestRig {
     const content = readFileSync(logFilePath, 'utf-8');
 
     // Split the content into individual JSON objects
-    // They are separated by "}\n{"
+    // They are separated by "}\n{" (or "}\r\n{" on WSL/Windows)
     const jsonObjects = content
-      .split(/}\n{/)
+      .split(/}\r?\n{/)
       .map((obj, index, array) => {
         // Add back the braces we removed during split
         if (index > 0) obj = '{' + obj;
@@ -1211,10 +1211,20 @@ export class TestRig {
       try {
         const logData = JSON.parse(jsonStr);
         logs.push(logData);
-      } catch (e) {
-        // Skip objects that aren't valid JSON
-        if (env['VERBOSE'] === 'true') {
-          console.error('Failed to parse telemetry object:', e);
+      } catch {
+        // Retry after stripping control characters (e.g. \r from WSL)
+        try {
+          // eslint-disable-next-line no-control-regex
+          const sanitized = jsonStr.replace(
+            /[\x00-\x08\x0b\x0c\x0e-\x1f]/g,
+            '',
+          );
+          const logData = JSON.parse(sanitized);
+          logs.push(logData);
+        } catch (e2) {
+          if (env['VERBOSE'] === 'true') {
+            console.error('Failed to parse telemetry object:', e2);
+          }
         }
       }
     }
