@@ -1193,39 +1193,26 @@ export class TestRig {
 
     const content = readFileSync(logFilePath, 'utf-8');
 
-    // Split the content into individual JSON objects
-    // They are separated by "}\n{" (or "}\r\n{" on WSL/Windows)
-    const jsonObjects = content
-      .split(/}\r?\n{/)
-      .map((obj, index, array) => {
-        // Add back the braces we removed during split
-        if (index > 0) obj = '{' + obj;
-        if (index < array.length - 1) obj = obj + '}';
-        return obj.trim();
-      })
-      .filter((obj) => obj);
-
+    // The telemetry format is pretty-printed JSON (2-space indent) with
+    // one object per entry. A top-level closing "}" always appears alone
+    // at column 0 (nested braces are indented). Accumulate lines and
+    // parse each time we hit a lone "}" line.
     const logs: ParsedLog[] = [];
-
-    for (const jsonStr of jsonObjects) {
-      try {
-        const logData = JSON.parse(jsonStr);
-        logs.push(logData);
-      } catch {
-        // Retry after stripping control characters (e.g. \r from WSL)
+    let current = '';
+    for (const line of content.split(/\r?\n/)) {
+      current += line + '\n';
+      if (line.trim() === '}') {
         try {
-          // eslint-disable-next-line no-control-regex
-          const sanitized = jsonStr.replace(
-            /[\x00-\x08\x0b\x0c\x0e-\x1f]/g,
-            '',
-          );
-          const logData = JSON.parse(sanitized);
-          logs.push(logData);
-        } catch (e2) {
+          logs.push(JSON.parse(current));
+        } catch {
           if (env['VERBOSE'] === 'true') {
-            console.error('Failed to parse telemetry object:', e2);
+            console.error(
+              'Failed to parse telemetry object:',
+              current.slice(0, 200),
+            );
           }
         }
+        current = '';
       }
     }
 
