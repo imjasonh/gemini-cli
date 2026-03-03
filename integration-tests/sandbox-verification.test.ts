@@ -12,7 +12,17 @@ import fs from 'node:fs';
 const sandbox = process.env['GEMINI_SANDBOX'];
 const isContainer =
   sandbox === 'docker' || sandbox === 'podman' || sandbox === 'macos-container';
-const hasSeccomp = sandbox === 'bwrap' || sandbox === 'landlock';
+const isWSL = (() => {
+  try {
+    return fs
+      .readFileSync('/proc/version', 'utf8')
+      .toLowerCase()
+      .includes('microsoft');
+  } catch {
+    return false;
+  }
+})();
+const hasSeccomp = (sandbox === 'bwrap' || sandbox === 'landlock') && !isWSL;
 const skipAll = !sandbox || sandbox === 'false';
 
 describe.skipIf(skipAll)('sandbox verification', () => {
