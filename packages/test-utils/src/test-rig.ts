@@ -1201,7 +1201,7 @@ export class TestRig {
     let current = '';
     for (const line of content.split(/\r?\n/)) {
       current += line + '\n';
-      if (line.trim() === '}') {
+      if (line === '}') {
         try {
           logs.push(JSON.parse(current));
         } catch {
