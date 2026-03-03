@@ -336,7 +336,7 @@ export function cleanupSeccomp(seccomp: { fd: number; path: string }): void {
 /**
  * Writes the seccomp filter to a temp file and returns the path.
  * Unlike prepareSeccompFd(), this does not open an fd — the caller
- * passes the path to the child process (e.g. landlock-helper --seccomp FILE).
+ * passes the path to the native landlock module (via applyLandlock()).
  *
  * Returns null if the filter is disabled or unsupported.
  */

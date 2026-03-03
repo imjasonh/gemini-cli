@@ -31,9 +31,6 @@ rmSync(join(root, 'node_modules'), RMRF_OPTIONS);
 rmSync(join(root, 'bundle'), RMRF_OPTIONS);
 rmSync(join(root, 'packages/cli/src/generated/'), RMRF_OPTIONS);
 
-// Clean native artifacts
-rmSync(join(root, 'packages/cli/native/landlock-helper'), { force: true });
-
 // Dynamically clean dist directories in all workspaces
 const rootPackageJson = JSON.parse(
   readFileSync(join(root, 'package.json'), 'utf-8'),

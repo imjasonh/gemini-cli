@@ -18,9 +18,8 @@
 // limitations under the License.
 
 import { execSync } from 'node:child_process';
-import { writeFileSync, existsSync, cpSync, readdirSync } from 'node:fs';
+import { writeFileSync, existsSync, cpSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import os from 'node:os';
 
 if (!process.cwd().includes('packages')) {
   console.error('must be invoked from a package directory');
@@ -35,23 +34,12 @@ execSync('tsc --build', { stdio: 'inherit' });
 // copy .{md,json} files
 execSync('node ../../scripts/copy_files.js', { stdio: 'inherit' });
 
-// Build Rust N-API module for landlock package
-if (
-  packageName === 'landlock' &&
-  existsSync(join(process.cwd(), 'Cargo.toml'))
-) {
-  console.log('Building Rust N-API module...');
-  if (os.platform() === 'linux') {
-    execSync('npm run build', { stdio: 'inherit' });
-    // Log what .node files were created
-    const nodeFiles = readdirSync(process.cwd()).filter((f) =>
-      f.endsWith('.node'),
-    );
-    console.log('Built .node files:', nodeFiles);
-  } else {
-    console.log('Skipping Rust build on non-Linux platform');
-  }
-}
+// Note: the @google/gemini-cli-landlock package has its own build script in
+// its package.json that runs `napi build` to compile the Rust N-API module.
+// It does NOT use this file. The build script includes an inline platform
+// guard that skips the Rust build on non-Linux platforms and on WSL (where
+// process.platform reports 'linux' but the Rust toolchain targets Windows).
+// The guard reads /proc/version to detect WSL via the "microsoft" marker.
 
 // Copy documentation for the core package
 if (packageName === 'core') {
