@@ -214,8 +214,17 @@ describe.skipIf(skipAll)('sandbox verification', () => {
   });
 
   // --- Group 4: Seccomp restrictions (bwrap/landlock only) ---
+  // Each test command attempts a blocked syscall, then writes a marker file
+  // only if the syscall succeeds. We assert the marker does NOT exist.
   describe.skipIf(!hasSeccomp)('seccomp restrictions', () => {
     let rig: TestRig;
+
+    const markers = [
+      'unshare-marker',
+      'mount-marker',
+      'chroot-marker',
+      'ptrace-marker',
+    ];
 
     beforeAll(async () => {
       rig = new TestRig();
@@ -229,30 +238,74 @@ describe.skipIf(skipAll)('sandbox verification', () => {
       await rig.run({
         args: 'Test seccomp restrictions',
       });
+      // Wait for the last tool call (ptrace/strace)
       await rig.waitForToolCall('run_shell_command', undefined, (args) =>
-        args.includes('unshare'),
+        args.includes('strace'),
       );
     });
 
     afterAll(async () => {
-      if (rig) await rig.cleanup();
+      if (rig) {
+        // Clean up markers in case seccomp was misconfigured
+        for (const marker of markers) {
+          try {
+            fs.unlinkSync(join(rig.testDir!, marker));
+          } catch {
+            // Ignore
+          }
+        }
+        await rig.cleanup();
+      }
     });
 
     it('should deny unshare via seccomp', async () => {
       const toolLogs = rig
         .readToolLogs()
         .filter((l) => l.toolRequest.name === 'run_shell_command');
-      const unshareCall = toolLogs.find((l) =>
-        l.toolRequest.args.includes('unshare'),
+      const call = toolLogs.find((l) => l.toolRequest.args.includes('unshare'));
+      expect(call, 'Expected unshare tool call').toBeTruthy();
+      expect(
+        fs.existsSync(join(rig.testDir!, 'unshare-marker')),
+        'unshare should have been blocked by seccomp',
+      ).toBe(false);
+    });
+
+    it('should deny mount via seccomp', async () => {
+      const toolLogs = rig
+        .readToolLogs()
+        .filter((l) => l.toolRequest.name === 'run_shell_command');
+      const call = toolLogs.find((l) =>
+        l.toolRequest.args.includes('mount -t tmpfs'),
       );
-      expect(unshareCall, 'Expected unshare tool call').toBeTruthy();
-      // The seccomp filter should block the unshare syscall, causing the
-      // command to fail. We can't check exit code from telemetry (tool
-      // reports success=true since the tool infra worked), but we can verify
-      // the tool was executed. The real assertion is that the sandbox didn't
-      // crash — if seccomp killed the sandbox process, rig.run() would have
-      // thrown.
-      expect(unshareCall!.toolRequest.success).toBe(true);
+      expect(call, 'Expected mount tool call').toBeTruthy();
+      expect(
+        fs.existsSync(join(rig.testDir!, 'mount-marker')),
+        'mount should have been blocked by seccomp',
+      ).toBe(false);
+    });
+
+    it('should deny chroot via seccomp', async () => {
+      const toolLogs = rig
+        .readToolLogs()
+        .filter((l) => l.toolRequest.name === 'run_shell_command');
+      const call = toolLogs.find((l) => l.toolRequest.args.includes('chroot'));
+      expect(call, 'Expected chroot tool call').toBeTruthy();
+      expect(
+        fs.existsSync(join(rig.testDir!, 'chroot-marker')),
+        'chroot should have been blocked by seccomp',
+      ).toBe(false);
+    });
+
+    it('should deny ptrace via seccomp', async () => {
+      const toolLogs = rig
+        .readToolLogs()
+        .filter((l) => l.toolRequest.name === 'run_shell_command');
+      const call = toolLogs.find((l) => l.toolRequest.args.includes('strace'));
+      expect(call, 'Expected strace tool call').toBeTruthy();
+      expect(
+        fs.existsSync(join(rig.testDir!, 'ptrace-marker')),
+        'ptrace should have been blocked by seccomp',
+      ).toBe(false);
     });
   });
 });
