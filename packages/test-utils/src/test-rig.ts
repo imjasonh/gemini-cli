@@ -1193,26 +1193,47 @@ export class TestRig {
 
     const content = readFileSync(logFilePath, 'utf-8');
 
-    // The telemetry format is pretty-printed JSON (2-space indent) with
-    // one object per entry. A top-level closing "}" always appears alone
-    // at column 0 (nested braces are indented). Accumulate lines and
-    // parse each time we hit a lone "}" line.
+    // Parse pretty-printed JSON objects by tracking brace depth. This
+    // handles nested objects, braces inside strings, and unusual line
+    // endings (e.g. WSL).
     const logs: ParsedLog[] = [];
     let current = '';
-    for (const line of content.split(/\r?\n/)) {
-      current += line + '\n';
-      if (line === '}') {
-        try {
-          logs.push(JSON.parse(current));
-        } catch {
-          if (env['VERBOSE'] === 'true') {
-            console.error(
-              'Failed to parse telemetry object:',
-              current.slice(0, 200),
-            );
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+
+    for (const char of content) {
+      current += char;
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (char === '\\' && inString) {
+        escape = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+      if (!inString) {
+        if (char === '{') depth++;
+        else if (char === '}') {
+          depth--;
+          if (depth === 0) {
+            try {
+              logs.push(JSON.parse(current));
+            } catch {
+              if (env['VERBOSE'] === 'true') {
+                console.error(
+                  'Failed to parse telemetry object:',
+                  current.slice(0, 200),
+                );
+              }
+            }
+            current = '';
           }
         }
-        current = '';
       }
     }
 
