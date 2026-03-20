@@ -47,7 +47,7 @@ jobs:
 
     steps:
       - name: 'Checkout'
-        uses: 'actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955' # ratchet:actions/checkout@v5
+        uses: 'actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8' # ratchet:actions/checkout@v5
 
       - name: 'Setup WSL2'
         if: "runner.os == 'Windows'"
@@ -64,7 +64,7 @@ jobs:
 
       - name: 'Set up Node.js 20.x'
         if: "runner.os != 'Windows'"
-        uses: 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020' # ratchet:actions-node@v4
+        uses: 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020' # ratchet:actions/setup-node@v4
         with:
           node-version: '20.x'
 
@@ -83,7 +83,7 @@ jobs:
 
       - name: 'Set up Rust'
         if: "matrix.sandbox == 'landlock'"
-        uses: 'actions-rust-lang/setup-rust-toolchain@11df97af8e8102fd60b60a77dfbf58d40cd843b8' # ratchet:actions-rust-lang/setup-rust-toolchain@v1
+        uses: 'actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606' # ratchet:actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: 'stable'
 
