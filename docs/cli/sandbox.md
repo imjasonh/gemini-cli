@@ -31,6 +31,33 @@ The benefits of sandboxing include:
 - **Safety**: Reduce risk when working with untrusted code or experimental
   commands.
 
+## Choosing a sandbox method
+
+| Feature           | sandbox-exec  | macos-container      | docker/podman | bwrap         | landlock      |
+| ----------------- | ------------- | -------------------- | ------------- | ------------- | ------------- |
+| Platform          | macOS         | macOS 26+            | All           | Linux         | Linux 5.13+   |
+| Isolation         | Process       | VM (separate kernel) | Container     | Namespace     | Kernel ACLs   |
+| Startup time      | Fast          | Medium               | Medium        | Fast          | Fast          |
+| Image required    | No            | Yes                  | Yes           | No            | No            |
+| Network isolation | Profile-based | Yes                  | Yes           | Profile-based | Profile-based |
+| Resource overhead | Low           | Medium               | Medium        | Low           | Low           |
+| Security level    | Medium        | Medium-High\*        | Medium        | Medium-High   | Medium-High   |
+
+**Quick guide:**
+
+- **macOS**: `sandbox-exec` is the default. Use `macos-container` for stronger
+  VM-level isolation (requires Apple Silicon, macOS 26+, and the `container`
+  CLI).
+- **Linux**: `landlock` is recommended (auto-detected with `sandbox: true`). Use
+  `bwrap` on older kernels, or `docker`/`podman` for a consistent container
+  environment.
+
+\*`macos-container` runs a separate Linux kernel, which protects the host from
+kernel exploits inside the sandbox. However, the home directory and workspace
+are mounted into the VM, so data exposure is similar to container-based modes.
+The VM boundary provides stronger kernel-level isolation, not stronger data
+isolation.
+
 ## Sandboxing methods
 
 Your ideal method of sandboxing may differ depending on your platform and your
@@ -50,91 +77,66 @@ Cross-platform sandboxing with complete process isolation.
 **Note**: Requires building the sandbox image locally or using a published image
 from your organization's registry.
 
-### 3. Windows Native Sandbox (Windows only)
+### 3. macOS Container (macOS 15+ only)
 
-... **Troubleshooting and Side Effects:**
+VM-level isolation using Apple's Container framework. Each sandbox runs in a
+lightweight Linux VM with its own kernel, providing the strongest available
+isolation.
 
-The Windows Native sandbox uses the `icacls` command to set a "Low Mandatory
-Level" on files and directories it needs to write to.
+**Requirements**: macOS 15 (Sequoia) or later, Apple Silicon,
+[`container` CLI](https://github.com/apple/container) installed.
 
-- **Persistence**: These integrity level changes are persistent on the
-  filesystem. Even after the sandbox session ends, files created or modified by
-  the sandbox will retain their "Low" integrity level.
-- **Manual Reset**: If you need to reset the integrity level of a file or
-  directory, you can use:
-  ```powershell
-  icacls "C:\path\to\dir" /setintegritylevel Medium
-  ```
-- **System Folders**: The sandbox manager automatically skips setting integrity
-  levels on system folders (like `C:\Windows`) for safety.
+**Enable**:
 
-### 4. gVisor / runsc (Linux only)
+- `gemini --sandbox=macos-container`
+- `GEMINI_SANDBOX=macos-container`
+- `{"tools": {"sandbox": "macos-container"}}`
 
-Strongest isolation available: runs containers inside a user-space kernel via
-[gVisor](https://github.com/google/gvisor). gVisor intercepts all container
-system calls and handles them in a sandboxed kernel written in Go, providing a
-strong security barrier between AI operations and the host OS.
+### 4. Bubblewrap (Linux only)
 
-**Prerequisites:**
+Lightweight namespace-based sandboxing using `bwrap`.
 
-- Linux (gVisor supports Linux only)
-- Docker installed and running
-- gVisor/runsc runtime configured
+**Requirements**: Linux with user namespace support, `bwrap` binary installed.
 
-When you set `sandbox: "runsc"`, Gemini CLI runs
-`docker run --runtime=runsc ...` to execute containers with gVisor isolation.
-runsc is not auto-detected; you must specify it explicitly (e.g.
-`GEMINI_SANDBOX=runsc` or `sandbox: "runsc"`).
+**Enable**:
 
-To set up runsc:
+- `gemini --sandbox=bwrap`
+- `GEMINI_SANDBOX=bwrap`
+- `{"tools": {"sandbox": "bwrap"}}`
 
-1.  Install the runsc binary.
-2.  Configure the Docker daemon to use the runsc runtime.
-3.  Verify the installation.
+### 5. Landlock (Linux, Recommended)
 
-### 4. LXC/LXD (Linux only, experimental)
+Modern kernel-based sandboxing using Landlock (filesystem) and Seccomp
+(syscalls).
 
-Full-system container sandboxing using LXC/LXD. Unlike Docker/Podman, LXC
-containers run a complete Linux system with `systemd`, `snapd`, and other system
-services. This is ideal for tools that don't work in standard Docker containers,
-such as Snapcraft and Rockcraft.
+**Requirements**: Linux kernel 5.13 or later.
 
-**Prerequisites**:
+**Enable**:
 
-- Linux only.
-- LXC/LXD must be installed (`snap install lxd` or `apt install lxd`).
-- A container must be created and running before starting Gemini CLI. Gemini
-  does **not** create the container automatically.
+- `gemini --sandbox=landlock`
+- `GEMINI_SANDBOX=landlock`
+- `{"tools": {"sandbox": "landlock"}}` (or just `true` for auto-detection)
 
-**Quick setup**:
+### 6. gVisor / runsc (Linux only)
 
-```bash
-# Initialize LXD (first time only)
-lxd init --auto
+Runs containers inside a user-space kernel via
+[gVisor](https://github.com/google/gvisor). Requires Docker and the runsc
+runtime. Must be explicitly specified (`GEMINI_SANDBOX=runsc`).
 
-# Create and start an Ubuntu container
-lxc launch ubuntu:24.04 gemini-sandbox
+### 7. LXC/LXD (Linux only, experimental)
 
-# Enable LXC sandboxing
-export GEMINI_SANDBOX=lxc
-gemini -p "build the project"
-```
+Full-system container sandboxing using LXC/LXD. The container must be created
+and running before starting Gemini CLI. See `GEMINI_SANDBOX=lxc`.
 
-**Custom container name**:
+### 8. Windows Native Sandbox (Windows only)
 
-```bash
-export GEMINI_SANDBOX=lxc
-export GEMINI_SANDBOX_IMAGE=my-snapcraft-container
-gemini -p "build the snap"
-```
+Uses the `icacls` command to set a "Low Mandatory Level" on files.
 
-**Limitations**:
+### Windows (WSL2)
 
-- Linux only (LXC is not available on macOS or Windows).
-- The container must already exist and be running.
-- The workspace directory is bind-mounted into the container at the same
-  absolute path — the path must be writable inside the container.
-- Used with tools like Snapcraft or Rockcraft that require a full system.
+Sandboxing is supported on Windows via WSL2. All Linux sandbox mechanisms work
+(`bwrap`, `landlock`, `docker`). WSL1 lacks kernel features and sandboxing is
+automatically skipped.
 
 ## Quickstart
 
@@ -175,7 +177,7 @@ gemini -p "run the test suite"
 
 1. **Command flag**: `-s` or `--sandbox`
 2. **Environment variable**:
-   `GEMINI_SANDBOX=true|docker|podman|sandbox-exec|runsc|lxc`
+   `GEMINI_SANDBOX=true|docker|podman|sandbox-exec|bwrap|landlock|macos-container|runsc|lxc|windows-native`
 3. **Settings file**: `"sandbox": true` in the `tools` object of your
    `settings.json` file (e.g., `{"tools": {"sandbox": true}}`).
 
@@ -189,6 +191,16 @@ Built-in profiles (set via `SEATBELT_PROFILE` env var):
 - `restrictive-proxied`: Strict restrictions, network via proxy
 - `strict-open`: Read and write restrictions, network allowed
 - `strict-proxied`: Read and write restrictions, network via proxy
+
+### Linux profiles (Bubblewrap / Landlock)
+
+Built-in profiles (set via `BWRAP_PROFILE` or `LANDLOCK_PROFILE` env vars):
+
+- `permissive` (default): Write to project/tmp, read-only system, network
+  allowed
+- `permissive-proxied`: Same as permissive, network via proxy
+- `restrictive`: Write to project/tmp only, `~/.gemini` read-only
+- `strict`: Write to project only, minimal system access
 
 ### Custom sandbox flags
 
@@ -293,6 +305,9 @@ gemini -s -p "run shell command: mount | grep workspace"
 - Use the most restrictive profile that allows your work.
 - Container overhead is minimal after first build.
 - GUI applications may not work in sandboxes.
+- `SANDBOX_FLAGS` and `SANDBOX_ENV` are trust-the-user escape hatches: they can
+  weaken sandbox isolation (e.g. mounting extra paths, forwarding credentials).
+  Only set them when you understand the security implications.
 
 ## Related documentation
 

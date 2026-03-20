@@ -13,9 +13,26 @@ import { FatalSandboxError, type SandboxConfig } from '@google/gemini-cli-core';
 import { createMockSandboxConfig } from '@google/gemini-cli-test-utils';
 import { EventEmitter } from 'node:events';
 
-const { mockedHomedir, mockedGetContainerPath } = vi.hoisted(() => ({
+const {
+  mockedHomedir,
+  mockedGetContainerPath,
+  mockedPrepareSeccompFd,
+  mockedCleanupSeccomp,
+  mockedPrepareSeccompFile,
+  mockedCleanupSeccompFile,
+  mockedApplyLandlock,
+} = vi.hoisted(() => ({
   mockedHomedir: vi.fn().mockReturnValue('/home/user'),
   mockedGetContainerPath: vi.fn().mockImplementation((p: string) => p),
+  mockedPrepareSeccompFd: vi
+    .fn()
+    .mockReturnValue({ fd: 99, path: '/tmp/bwrap-seccomp-test.bpf' }),
+  mockedCleanupSeccomp: vi.fn(),
+  mockedPrepareSeccompFile: vi
+    .fn()
+    .mockReturnValue({ path: '/tmp/seccomp-test.bpf' }),
+  mockedCleanupSeccompFile: vi.fn(),
+  mockedApplyLandlock: vi.fn(),
 }));
 
 vi.mock('./sandboxUtils.js', async (importOriginal) => {
@@ -26,9 +43,31 @@ vi.mock('./sandboxUtils.js', async (importOriginal) => {
   };
 });
 
+vi.mock('@google/gemini-cli-landlock', () => ({
+  default: {
+    checkLandlock: vi.fn(),
+    applyLandlock: mockedApplyLandlock,
+  },
+  checkLandlock: vi.fn(),
+  applyLandlock: mockedApplyLandlock,
+}));
+
+vi.mock('./bwrap-seccomp.js', () => ({
+  prepareSeccompFd: mockedPrepareSeccompFd,
+  cleanupSeccomp: mockedCleanupSeccomp,
+  prepareSeccompFile: mockedPrepareSeccompFile,
+  cleanupSeccompFile: mockedCleanupSeccompFile,
+}));
+
 vi.mock('node:child_process');
 vi.mock('node:os');
 vi.mock('node:fs');
+
+// Default image inspect response; tests can override via mockImageInspectResponse
+let mockImageInspectResponse = JSON.stringify({
+  Architecture: 'amd64',
+});
+
 vi.mock('node:util', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:util')>();
   return {
@@ -47,6 +86,9 @@ vi.mock('node:util', async (importOriginal) => {
           }
           if (cmd.includes('ps -a --format')) {
             return { stdout: 'existing-container', stderr: '' };
+          }
+          if (cmd.includes('container image inspect')) {
+            return { stdout: mockImageInspectResponse, stderr: '' };
           }
           return { stdout: '', stderr: '' };
         };
@@ -113,6 +155,7 @@ describe('sandbox', () => {
     vi.clearAllMocks();
     process.env = { ...originalEnv };
     process.argv = [...originalArgv];
+    mockImageInspectResponse = JSON.stringify({ Architecture: 'amd64' });
     mockProcessIn = {
       pause: vi.fn(),
       resume: vi.fn(),
@@ -125,6 +168,13 @@ describe('sandbox', () => {
     vi.mocked(os.platform).mockReturnValue('linux');
     vi.mocked(os.homedir).mockReturnValue('/home/user');
     vi.mocked(os.tmpdir).mockReturnValue('/tmp');
+    vi.mocked(os.userInfo).mockReturnValue({
+      username: 'user',
+      uid: 1000,
+      gid: 1000,
+      homedir: '/home/user',
+      shell: '/bin/bash',
+    });
     vi.mocked(fs.existsSync).mockReturnValue(true);
     vi.mocked(fs.realpathSync).mockImplementation((p) => p as string);
     vi.mocked(execSync).mockReturnValue(Buffer.from(''));
@@ -690,6 +740,1037 @@ describe('sandbox', () => {
         });
 
         await expect(start_sandbox(config)).rejects.toThrow(/not found/);
+      });
+    });
+
+    describe('macOS Container sandbox', () => {
+      it('should route macos-container to the container CLI with amd64-only image', async () => {
+        vi.mocked(os.platform).mockReturnValue('darwin');
+        mockImageInspectResponse = JSON.stringify({
+          Architecture: 'amd64',
+        });
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'macos-container',
+          image: 'some-image',
+        });
+
+        // 1. container system status (via execAsync)
+        // Already mocked by the promisify mock returning { stdout: '', stderr: '' }
+
+        // 2. container image list -q (image exists check)
+        interface MockProcessWithStdout extends EventEmitter {
+          stdout: EventEmitter;
+        }
+        const mockImageListProcess =
+          new EventEmitter() as MockProcessWithStdout;
+        mockImageListProcess.stdout = new EventEmitter();
+        vi.mocked(spawn).mockImplementationOnce(() => {
+          setTimeout(() => {
+            mockImageListProcess.stdout.emit(
+              'data',
+              Buffer.from('some-image\n'),
+            );
+            mockImageListProcess.emit('close', 0);
+          }, 1);
+          return mockImageListProcess as unknown as ReturnType<typeof spawn>;
+        });
+
+        // 3. container run
+        const mockSpawnProcess = new EventEmitter() as unknown as ReturnType<
+          typeof spawn
+        >;
+        mockSpawnProcess.on = vi.fn().mockImplementation((event, cb) => {
+          if (event === 'close') {
+            setTimeout(() => cb(0), 10);
+          }
+          return mockSpawnProcess;
+        });
+        vi.mocked(spawn).mockImplementationOnce(() => mockSpawnProcess);
+
+        const promise = start_sandbox(config, [], undefined, ['arg1']);
+        await expect(promise).resolves.toBe(0);
+
+        // amd64-only image should use --rosetta --arch amd64
+        expect(spawn).toHaveBeenCalledWith(
+          'container',
+          expect.arrayContaining([
+            'run',
+            '-i',
+            '--rm',
+            '--rosetta',
+            '--arch',
+            'amd64',
+          ]),
+          expect.objectContaining({ stdio: 'inherit' }),
+        );
+      });
+
+      it('should run natively with arm64 image (no --rosetta)', async () => {
+        vi.mocked(os.platform).mockReturnValue('darwin');
+        mockImageInspectResponse = JSON.stringify({
+          Manifests: [
+            { Platform: { Architecture: 'amd64' } },
+            { Platform: { Architecture: 'arm64' } },
+          ],
+        });
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'macos-container',
+          image: 'some-image',
+        });
+
+        interface MockProcessWithStdout extends EventEmitter {
+          stdout: EventEmitter;
+        }
+        const mockImageListProcess =
+          new EventEmitter() as MockProcessWithStdout;
+        mockImageListProcess.stdout = new EventEmitter();
+        vi.mocked(spawn).mockImplementationOnce(() => {
+          setTimeout(() => {
+            mockImageListProcess.stdout.emit(
+              'data',
+              Buffer.from('some-image\n'),
+            );
+            mockImageListProcess.emit('close', 0);
+          }, 1);
+          return mockImageListProcess as unknown as ReturnType<typeof spawn>;
+        });
+
+        const mockSpawnProcess = new EventEmitter() as unknown as ReturnType<
+          typeof spawn
+        >;
+        mockSpawnProcess.on = vi.fn().mockImplementation((event, cb) => {
+          if (event === 'close') {
+            setTimeout(() => cb(0), 10);
+          }
+          return mockSpawnProcess;
+        });
+        vi.mocked(spawn).mockImplementationOnce(() => mockSpawnProcess);
+
+        const promise = start_sandbox(config, [], undefined, ['arg1']);
+        await expect(promise).resolves.toBe(0);
+
+        // arm64-capable image should NOT have --rosetta
+        const runCall = vi
+          .mocked(spawn)
+          .mock.calls.find(
+            (call) =>
+              call[0] === 'container' && (call[1] as string[])?.[0] === 'run',
+          );
+        expect(runCall).toBeDefined();
+        const runArgs = runCall![1] as string[];
+        expect(runArgs).not.toContain('--rosetta');
+      });
+
+      it('should throw FatalSandboxError if BUILD_SANDBOX is set', async () => {
+        vi.mocked(os.platform).mockReturnValue('darwin');
+        process.env['BUILD_SANDBOX'] = '1';
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'macos-container',
+          image: 'some-image',
+        });
+
+        await expect(start_sandbox(config)).rejects.toThrow(FatalSandboxError);
+      });
+
+      it('should throw FatalSandboxError if image cannot be obtained', async () => {
+        vi.mocked(os.platform).mockReturnValue('darwin');
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'macos-container',
+          image: 'missing-image',
+        });
+
+        // 1. container image list -q (image not found)
+        interface MockProcessWithStdout extends EventEmitter {
+          stdout: EventEmitter;
+        }
+        const mockImageListProcess =
+          new EventEmitter() as MockProcessWithStdout;
+        mockImageListProcess.stdout = new EventEmitter();
+        vi.mocked(spawn).mockImplementationOnce(() => {
+          setTimeout(() => {
+            mockImageListProcess.emit('close', 0);
+          }, 1);
+          return mockImageListProcess as unknown as ReturnType<typeof spawn>;
+        });
+
+        // 2. container image pull (fails)
+        interface MockProcessWithStdoutStderr extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockPullProcess =
+          new EventEmitter() as MockProcessWithStdoutStderr;
+        mockPullProcess.stdout = new EventEmitter();
+        mockPullProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockImplementationOnce(() => {
+          setTimeout(() => {
+            mockPullProcess.emit('close', 1);
+          }, 1);
+          return mockPullProcess as unknown as ReturnType<typeof spawn>;
+        });
+
+        await expect(start_sandbox(config)).rejects.toThrow(FatalSandboxError);
+      });
+
+      it('should pull image if not found locally', async () => {
+        vi.mocked(os.platform).mockReturnValue('darwin');
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'macos-container',
+          image: 'new-image',
+        });
+
+        // 1. container image list -q (image not found)
+        interface MockProcessWithStdout extends EventEmitter {
+          stdout: EventEmitter;
+        }
+        const mockImageListProcess =
+          new EventEmitter() as MockProcessWithStdout;
+        mockImageListProcess.stdout = new EventEmitter();
+        vi.mocked(spawn).mockImplementationOnce(() => {
+          setTimeout(() => {
+            mockImageListProcess.emit('close', 0);
+          }, 1);
+          return mockImageListProcess as unknown as ReturnType<typeof spawn>;
+        });
+
+        // 2. container image pull (succeeds)
+        interface MockProcessWithStdoutStderr extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockPullProcess =
+          new EventEmitter() as MockProcessWithStdoutStderr;
+        mockPullProcess.stdout = new EventEmitter();
+        mockPullProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockImplementationOnce(() => {
+          setTimeout(() => {
+            mockPullProcess.emit('close', 0);
+          }, 1);
+          return mockPullProcess as unknown as ReturnType<typeof spawn>;
+        });
+
+        // 3. container run
+        const mockSpawnProcess = new EventEmitter() as unknown as ReturnType<
+          typeof spawn
+        >;
+        mockSpawnProcess.on = vi.fn().mockImplementation((event, cb) => {
+          if (event === 'close') {
+            setTimeout(() => cb(0), 10);
+          }
+          return mockSpawnProcess;
+        });
+        vi.mocked(spawn).mockImplementationOnce(() => mockSpawnProcess);
+
+        await start_sandbox(config, [], undefined, ['arg1']);
+
+        // Verify pull was called
+        expect(spawn).toHaveBeenCalledWith(
+          'container',
+          ['image', 'pull', 'new-image'],
+          expect.any(Object),
+        );
+      });
+
+      it('should forward environment variables', async () => {
+        vi.mocked(os.platform).mockReturnValue('darwin');
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'macos-container',
+          image: 'some-image',
+        });
+        process.env['GEMINI_API_KEY'] = 'test-key';
+        process.env['GOOGLE_GEMINI_BASE_URL'] = 'http://test.proxy';
+
+        // 1. container image list -q (image exists)
+        interface MockProcessWithStdout extends EventEmitter {
+          stdout: EventEmitter;
+        }
+        const mockImageListProcess =
+          new EventEmitter() as MockProcessWithStdout;
+        mockImageListProcess.stdout = new EventEmitter();
+        vi.mocked(spawn).mockImplementationOnce(() => {
+          setTimeout(() => {
+            mockImageListProcess.stdout.emit(
+              'data',
+              Buffer.from('some-image\n'),
+            );
+            mockImageListProcess.emit('close', 0);
+          }, 1);
+          return mockImageListProcess as unknown as ReturnType<typeof spawn>;
+        });
+
+        // 2. container run
+        const mockSpawnProcess = new EventEmitter() as unknown as ReturnType<
+          typeof spawn
+        >;
+        mockSpawnProcess.on = vi.fn().mockImplementation((event, cb) => {
+          if (event === 'close') {
+            setTimeout(() => cb(0), 10);
+          }
+          return mockSpawnProcess;
+        });
+        vi.mocked(spawn).mockImplementationOnce(() => mockSpawnProcess);
+
+        await start_sandbox(config);
+
+        expect(spawn).toHaveBeenCalledWith(
+          'container',
+          expect.arrayContaining([
+            '-e',
+            'GEMINI_API_KEY=test-key',
+            '-e',
+            'GOOGLE_GEMINI_BASE_URL=http://test.proxy',
+          ]),
+          expect.any(Object),
+        );
+      });
+
+      it('should mount volumes correctly', async () => {
+        vi.mocked(os.platform).mockReturnValue('darwin');
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'macos-container',
+          image: 'some-image',
+        });
+        process.env['SANDBOX_MOUNTS'] = '/host/path:/container/path:ro';
+
+        // 1. container image list -q (image exists)
+        interface MockProcessWithStdout extends EventEmitter {
+          stdout: EventEmitter;
+        }
+        const mockImageListProcess =
+          new EventEmitter() as MockProcessWithStdout;
+        mockImageListProcess.stdout = new EventEmitter();
+        vi.mocked(spawn).mockImplementationOnce(() => {
+          setTimeout(() => {
+            mockImageListProcess.stdout.emit(
+              'data',
+              Buffer.from('some-image\n'),
+            );
+            mockImageListProcess.emit('close', 0);
+          }, 1);
+          return mockImageListProcess as unknown as ReturnType<typeof spawn>;
+        });
+
+        // 2. container run
+        const mockSpawnProcess = new EventEmitter() as unknown as ReturnType<
+          typeof spawn
+        >;
+        mockSpawnProcess.on = vi.fn().mockImplementation((event, cb) => {
+          if (event === 'close') {
+            setTimeout(() => cb(0), 10);
+          }
+          return mockSpawnProcess;
+        });
+        vi.mocked(spawn).mockImplementationOnce(() => mockSpawnProcess);
+
+        await start_sandbox(config);
+
+        expect(spawn).toHaveBeenCalledWith(
+          'container',
+          expect.arrayContaining(['--volume', '/host/path:/container/path:ro']),
+          expect.any(Object),
+        );
+      });
+    });
+
+    describe('Bubblewrap sandbox', () => {
+      it('should route bwrap to bubblewrap with namespace args', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'bwrap',
+          image: 'some-image',
+        });
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, [
+          'gemini',
+          '--prompt',
+          'hello',
+        ]);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        expect(spawn).toHaveBeenCalledWith(
+          'bwrap',
+          expect.arrayContaining([
+            '--unshare-user',
+
+            '--unshare-pid',
+            '--new-session',
+            '--die-with-parent',
+            '--dev',
+            '/dev',
+            '--proc',
+            '/proc',
+          ]),
+          expect.objectContaining({
+            stdio: ['inherit', 'inherit', 'inherit', 99],
+          }),
+        );
+      });
+
+      it('should include --seccomp arg when seccomp is enabled', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'bwrap',
+          image: 'some-image',
+        });
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, ['gemini']);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        expect(spawn).toHaveBeenCalledWith(
+          'bwrap',
+          expect.arrayContaining(['--seccomp', '3']),
+          expect.any(Object),
+        );
+      });
+
+      it('should not include --seccomp when seccomp is disabled', async () => {
+        mockedPrepareSeccompFd.mockReturnValueOnce(null);
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'bwrap',
+          image: 'some-image',
+        });
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, ['gemini']);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        const bwrapArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+        expect(bwrapArgs).not.toContain('--seccomp');
+        // Should use simple inherit array without extra fd
+        expect(spawn).toHaveBeenCalledWith(
+          'bwrap',
+          expect.any(Array),
+          expect.objectContaining({
+            stdio: ['inherit', 'inherit', 'inherit'],
+          }),
+        );
+      });
+
+      it('should cleanup seccomp on process close', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'bwrap',
+          image: 'some-image',
+        });
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, ['gemini']);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        expect(mockedCleanupSeccomp).toHaveBeenCalledWith({
+          fd: 99,
+          path: '/tmp/bwrap-seccomp-test.bpf',
+        });
+      });
+
+      it('should set SANDBOX=bwrap env var', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'bwrap',
+          image: 'some-image',
+        });
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, ['gemini']);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        expect(spawn).toHaveBeenCalledWith(
+          'bwrap',
+          expect.arrayContaining(['--setenv', 'SANDBOX', 'bwrap']),
+          expect.any(Object),
+        );
+      });
+
+      it('should forward environment variables via --setenv', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'bwrap',
+          image: 'some-image',
+        });
+        process.env['GEMINI_API_KEY'] = 'test-key';
+        process.env['GOOGLE_GEMINI_BASE_URL'] = 'http://test.proxy';
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        expect(spawn).toHaveBeenCalledWith(
+          'bwrap',
+          expect.arrayContaining([
+            '--setenv',
+            'GEMINI_API_KEY',
+            'test-key',
+            '--setenv',
+            'GOOGLE_GEMINI_BASE_URL',
+            'http://test.proxy',
+          ]),
+          expect.any(Object),
+        );
+      });
+
+      it('should include bind mounts from permissive profile', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'bwrap',
+          image: 'some-image',
+        });
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, ['gemini']);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+
+        const bwrapArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+        // Should have --ro-bind for system dirs
+        const roBindIdx = bwrapArgs.indexOf('--ro-bind');
+        expect(roBindIdx).toBeGreaterThan(-1);
+        // Should have --bind for rw dirs (workdir)
+        const bindIdx = bwrapArgs.indexOf('--bind');
+        expect(bindIdx).toBeGreaterThan(-1);
+      });
+
+      it('should throw FatalSandboxError if BUILD_SANDBOX is set', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        process.env['BUILD_SANDBOX'] = '1';
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'bwrap',
+          image: 'some-image',
+        });
+
+        await expect(start_sandbox(config)).rejects.toThrow(FatalSandboxError);
+      });
+
+      it('should pass cliArgs after -- separator', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'bwrap',
+          image: 'some-image',
+        });
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, [
+          'gemini',
+          '--prompt',
+          'test',
+        ]);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+
+        const bwrapArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+        const separatorIdx = bwrapArgs.indexOf('--');
+        expect(separatorIdx).toBeGreaterThan(-1);
+        expect(bwrapArgs.slice(separatorIdx + 1)).toEqual([
+          'gemini',
+          '--prompt',
+          'test',
+        ]);
+      });
+
+      it('should use custom profile from BWRAP_PROFILE env', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        process.env['BWRAP_PROFILE'] = 'strict';
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'bwrap',
+          image: 'some-image',
+        });
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, ['gemini']);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        // strict profile should NOT have ~/.gemini in bind mounts
+        const bwrapArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+        const argsStr = bwrapArgs.join(' ');
+        expect(argsStr).not.toContain('.gemini');
+      });
+
+      it('should throw for invalid profile name', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        process.env['BWRAP_PROFILE'] = 'nonexistent';
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'bwrap',
+          image: 'some-image',
+        });
+
+        await expect(start_sandbox(config)).rejects.toThrow(FatalSandboxError);
+      });
+
+      it('should add --ro-bind for CLI entry script directory', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'bwrap',
+          image: 'some-image',
+        });
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        // Simulate cliArgs pointing to an entry script outside standard dirs
+        const promise = start_sandbox(config, [], undefined, [
+          'node',
+          '/opt/custom/bundle/gemini.js',
+          '--prompt',
+          'hello',
+        ]);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        const bwrapArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+        // The script dir /opt/custom/bundle should be ro-bound
+        expect(bwrapArgs).toContain('--ro-bind');
+        const roBindPairs: string[] = [];
+        for (let i = 0; i < bwrapArgs.length; i++) {
+          if (bwrapArgs[i] === '--ro-bind') {
+            roBindPairs.push(bwrapArgs[i + 1]);
+          }
+        }
+        expect(roBindPairs).toContain('/opt/custom/bundle');
+      });
+    });
+
+    describe('Landlock sandbox', () => {
+      it('should apply landlock and spawn command directly', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'landlock',
+          image: 'some-image',
+        });
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, [
+          'gemini',
+          '--prompt',
+          'hello',
+        ]);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        expect(mockedApplyLandlock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            roPaths: expect.any(Array),
+            rwPaths: expect.any(Array),
+            rxPaths: expect.any(Array),
+            seccompFilterPath: '/tmp/seccomp-test.bpf',
+          }),
+        );
+        expect(spawn).toHaveBeenCalledWith(
+          'gemini',
+          ['--prompt', 'hello'],
+          expect.objectContaining({
+            stdio: 'inherit',
+            env: expect.objectContaining({ SANDBOX: 'landlock' }),
+          }),
+        );
+      });
+
+      it('should pass seccomp filter path when seccomp is enabled', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'landlock',
+          image: 'some-image',
+        });
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, ['gemini']);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        expect(mockedApplyLandlock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            seccompFilterPath: '/tmp/seccomp-test.bpf',
+          }),
+        );
+      });
+
+      it('should not include --seccomp when seccomp is disabled', async () => {
+        mockedPrepareSeccompFile.mockReturnValueOnce(null);
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'landlock',
+          image: 'some-image',
+        });
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, ['gemini']);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        const landlockArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+        expect(landlockArgs).not.toContain('--seccomp');
+      });
+
+      it('should cleanup seccomp file on process close', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'landlock',
+          image: 'some-image',
+        });
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, ['gemini']);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        expect(mockedCleanupSeccompFile).toHaveBeenCalledWith({
+          path: '/tmp/seccomp-test.bpf',
+        });
+      });
+
+      it('should set SANDBOX=landlock in env', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'landlock',
+          image: 'some-image',
+        });
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, ['gemini']);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        expect(mockedApplyLandlock).toHaveBeenCalled();
+        expect(spawn).toHaveBeenCalledWith(
+          'gemini',
+          [],
+          expect.objectContaining({
+            env: expect.objectContaining({ SANDBOX: 'landlock' }),
+          }),
+        );
+      });
+
+      it('should throw FatalSandboxError if BUILD_SANDBOX is set', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        process.env['BUILD_SANDBOX'] = '1';
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'landlock',
+          image: 'some-image',
+        });
+
+        await expect(start_sandbox(config)).rejects.toThrow(FatalSandboxError);
+      });
+
+      it('should use custom profile from LANDLOCK_PROFILE env', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        process.env['LANDLOCK_PROFILE'] = 'strict';
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'landlock',
+          image: 'some-image',
+        });
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, ['gemini']);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        // strict profile should NOT have ~/.gemini in args
+        const landlockArgs = vi.mocked(spawn).mock.calls[0][1] as string[];
+        const argsStr = landlockArgs.join(' ');
+        expect(argsStr).not.toContain('.gemini');
+      });
+
+      it('should throw for invalid profile name', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        process.env['LANDLOCK_PROFILE'] = 'nonexistent';
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'landlock',
+          image: 'some-image',
+        });
+
+        await expect(start_sandbox(config)).rejects.toThrow(FatalSandboxError);
+      });
+
+      it('should add rxPaths for CLI entry script directory', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'landlock',
+          image: 'some-image',
+        });
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        // Simulate cliArgs pointing to an entry script outside standard dirs
+        const promise = start_sandbox(config, [], undefined, [
+          'node',
+          '/opt/custom/bundle/gemini.js',
+          '--prompt',
+          'hello',
+        ]);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+        // The script dir /opt/custom/bundle should have rx access
+        expect(mockedApplyLandlock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            rxPaths: expect.arrayContaining(['/opt/custom/bundle']),
+          }),
+        );
+      });
+
+      it('should pass cliArgs directly to spawn', async () => {
+        vi.mocked(os.platform).mockReturnValue('linux');
+        const config: SandboxConfig = createMockSandboxConfig({
+          command: 'landlock',
+          image: 'some-image',
+        });
+
+        interface MockProcess extends EventEmitter {
+          stdout: EventEmitter;
+          stderr: EventEmitter;
+        }
+        const mockSpawnProcess = new EventEmitter() as MockProcess;
+        mockSpawnProcess.stdout = new EventEmitter();
+        mockSpawnProcess.stderr = new EventEmitter();
+        vi.mocked(spawn).mockReturnValue(
+          mockSpawnProcess as unknown as ReturnType<typeof spawn>,
+        );
+
+        const promise = start_sandbox(config, [], undefined, [
+          'gemini',
+          '--prompt',
+          'test',
+        ]);
+
+        setTimeout(() => {
+          mockSpawnProcess.emit('close', 0);
+        }, 10);
+
+        await expect(promise).resolves.toBe(0);
+
+        expect(spawn).toHaveBeenCalledWith(
+          'gemini',
+          ['--prompt', 'test'],
+          expect.any(Object),
+        );
       });
     });
   });

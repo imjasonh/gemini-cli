@@ -1,0 +1,152 @@
+name: 'Testing: Sandbox Modes'
+
+on:
+  push:
+    branches:
+      - 'main'
+      - 'release/*'
+  pull_request:
+    branches:
+      - 'main'
+  workflow_dispatch:
+
+concurrency:
+  group: '${{ github.workflow }}-${{ github.head_ref || github.ref }}'
+  cancel-in-progress: true
+
+permissions:
+  contents: 'read'
+
+jobs:
+  test-sandbox:
+    name: 'Sandbox (${{ matrix.sandbox }} ${{ matrix.os }})'
+    runs-on: '${{ matrix.os }}'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sandbox: 'bwrap'
+            os: 'ubuntu-latest'
+          - sandbox: 'landlock'
+            os: 'ubuntu-latest'
+          - sandbox: 'landlock'
+            os: 'ubuntu-24.04-arm'
+          - sandbox: 'sandbox-exec'
+            os: 'macos-latest'
+          # macos-container requires Apple's Virtualization.framework, which is
+          # unavailable on GHA runners (no nested VZ in ARM64 VMs).
+          # Both `container build` and `container run` fail. Test locally only.
+          - sandbox: 'docker'
+            os: 'ubuntu-latest'
+          - sandbox: 'bwrap'
+            os: 'windows-2025'
+
+    defaults:
+      run:
+        shell: "${{ contains(matrix.os, 'windows') && 'wsl-bash {0}' || 'bash' }}"
+
+    steps:
+      - name: 'Checkout'
+        uses: 'actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955' # ratchet:actions/checkout@v5
+
+      - name: 'Setup WSL2'
+        if: "runner.os == 'Windows'"
+        uses: 'Vampire/setup-wsl@6a8db447be7ed35f2f499c02c6e60ff77ef11278' # ratchet:Vampire/setup-wsl@v6
+        with:
+          distribution: 'Ubuntu-24.04'
+          additional-packages: 'bubblewrap build-essential'
+
+      - name: 'Install Node.js 20 in WSL'
+        if: "runner.os == 'Windows'"
+        run: |
+          curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+          sudo apt-get install -y nodejs
+
+      - name: 'Set up Node.js 20.x'
+        if: "runner.os != 'Windows'"
+        uses: 'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020' # ratchet:actions-node@v4
+        with:
+          node-version: '20.x'
+
+      - name: 'Enable unprivileged user namespaces (bwrap)'
+        if: "matrix.sandbox == 'bwrap' && runner.os != 'Windows'"
+        run: |
+          # Ubuntu 24.04 restricts unprivileged user namespaces via AppArmor.
+          # bwrap needs them to set up uid/gid maps.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null \
+            || sudo sysctl -w kernel.unprivileged_userns_clone=1 2>/dev/null \
+            || { echo "::error::Could not enable unprivileged user namespaces"; exit 1; }
+
+      - name: 'Install bubblewrap'
+        if: "matrix.sandbox == 'bwrap' && runner.os != 'Windows'"
+        run: 'sudo apt-get install -y bubblewrap'
+
+      - name: 'Set up Rust'
+        if: "matrix.sandbox == 'landlock'"
+        uses: 'actions-rust-lang/setup-rust-toolchain@11df97af8e8102fd60b60a77dfbf58d40cd843b8' # ratchet:actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 'stable'
+
+      - name: 'Set up Landlock'
+        if: "matrix.sandbox == 'landlock'"
+        run: |
+          # Ensure securityfs is mounted
+          if [ ! -d /sys/kernel/security ]; then
+            sudo mount -t securityfs securityfs /sys/kernel/security
+          fi
+
+          # Diagnostics
+          echo "Kernel: $(uname -r)"
+          LSM_LIST=$(cat /sys/kernel/security/lsm 2>/dev/null || echo 'NOT AVAILABLE')
+          echo "LSMs: ${LSM_LIST}"
+
+          # Verify Landlock LSM is loaded
+          if ! echo "${LSM_LIST}" | grep -qw landlock; then
+            echo "::error::Landlock LSM is not available on this runner (kernel $(uname -r)). LSMs: ${LSM_LIST}"
+            exit 1
+          fi
+
+      - name: 'Install dependencies'
+        run: 'npm ci'
+
+      - name: 'Build project'
+        run: 'npm run build'
+
+      - name: 'Run sandbox unit tests'
+        run: |
+          npx vitest run \
+            packages/cli/src/utils/sandbox.test.ts \
+            packages/cli/src/utils/sandboxUtils.test.ts \
+            packages/cli/src/utils/bwrapProfiles.test.ts \
+            packages/cli/src/utils/bwrap-seccomp.test.ts \
+            packages/cli/src/utils/landlockProfiles.test.ts
+
+      - name: 'Run sandbox verification test'
+        env:
+          GEMINI_API_KEY: 'fake-key-for-sandbox-test'
+          KEEP_OUTPUT: 'true'
+          VERBOSE: 'true'
+          WSLENV: 'GEMINI_API_KEY:KEEP_OUTPUT:VERBOSE'
+        run: 'npm run test:integration:sandbox:${{ matrix.sandbox }} -- sandbox-verification.test.ts'
+
+      - name: 'Report sandbox metrics'
+        if: 'always()'
+        run: |
+          if [ -d .integration-tests ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            find .integration-tests -name 'telemetry.log' -type f -print0 \
+              | xargs -0 node scripts/process-sandbox-metrics.js >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+  sandbox-summary:
+    name: 'Sandbox Tests Summary'
+    if: 'always()'
+    needs: 'test-sandbox'
+    runs-on: 'ubuntu-latest'
+    steps:
+      - name: 'Check results'
+        run: |
+          if [[ "${{ needs.test-sandbox.result }}" != "success" ]]; then
+            echo "One or more required sandbox tests failed."
+            exit 1
+          fi
+          echo "All required sandbox tests passed."

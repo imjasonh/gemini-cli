@@ -58,8 +58,8 @@ runs:
       id: 'image_tag'
       shell: 'bash'
       run: |-
-        SHELL_TAG_NAME="${INPUTS_GITHUB_REF_NAME}"
-        FINAL_TAG="${INPUTS_GITHUB_SHA}"
+        SHELL_TAG_NAME="${{ inputs.github-ref-name }}"
+        FINAL_TAG="${{ inputs.github-sha }}"
         if [[ "$SHELL_TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
           echo "Release detected."
           FINAL_TAG="${SHELL_TAG_NAME#v}"
@@ -68,43 +68,30 @@ runs:
         fi
         echo "Determined image tag: $FINAL_TAG"
         echo "FINAL_TAG=$FINAL_TAG" >> $GITHUB_OUTPUT
-      env:
-        INPUTS_GITHUB_REF_NAME: '${{ inputs.github-ref-name }}'
-        INPUTS_GITHUB_SHA: '${{ inputs.github-sha }}'
-    # We build amd64 just so we can verify it.
-    # We build and push both amd64 and arm64 in the publish step.
-    - name: 'build'
-      id: 'docker_build'
+    - name: 'pack tarballs'
       shell: 'bash'
       env:
-        GEMINI_SANDBOX_IMAGE_TAG: '${{ steps.image_tag.outputs.FINAL_TAG }}'
         GEMINI_SANDBOX: 'docker'
-        BUILD_SANDBOX_FLAGS: '--platform linux/amd64 --load'
-        STEPS_IMAGE_TAG_OUTPUTS_FINAL_TAG: '${{ steps.image_tag.outputs.FINAL_TAG }}'
-      run: |-
-        npm run build:sandbox -- \
-          --image "google/gemini-cli-sandbox:${STEPS_IMAGE_TAG_OUTPUTS_FINAL_TAG}" \
-          --output-file final_image_uri.txt
-        echo "uri=$(cat final_image_uri.txt)" >> $GITHUB_OUTPUT
-    - name: 'verify'
-      shell: 'bash'
-      run: |-
-        docker run --rm --entrypoint sh "${{ steps.docker_build.outputs.uri }}" -lc '
-          set -e
-          node -e "const fs=require(\"node:fs\"); JSON.parse(fs.readFileSync(\"/usr/local/share/npm-global/lib/node_modules/@google/gemini-cli/package.json\",\"utf8\")); JSON.parse(fs.readFileSync(\"/usr/local/share/npm-global/lib/node_modules/@google/gemini-cli-core/package.json\",\"utf8\"));"
-          /usr/local/share/npm-global/bin/gemini --version >/dev/null
-        '
-    - name: 'publish'
+      run: 'npm run build:sandbox -- --pack-only -s'
+    - name: 'build and push multi-arch image'
       shell: 'bash'
       if: "${{ inputs.dry-run != 'true' }}"
-      env:
-        GEMINI_SANDBOX_IMAGE_TAG: '${{ steps.image_tag.outputs.FINAL_TAG }}'
-        GEMINI_SANDBOX: 'docker'
-        BUILD_SANDBOX_FLAGS: '--platform linux/amd64,linux/arm64 --push'
-        STEPS_IMAGE_TAG_OUTPUTS_FINAL_TAG: '${{ steps.image_tag.outputs.FINAL_TAG }}'
       run: |-
-        npm run build:sandbox -- \
-          --image "google/gemini-cli-sandbox:${STEPS_IMAGE_TAG_OUTPUTS_FINAL_TAG}"
+        docker buildx build \
+          --platform linux/amd64,linux/arm64 \
+          --build-arg CLI_VERSION_ARG=$(jq -r .version package.json) \
+          -t google/gemini-cli-sandbox:${{ steps.image_tag.outputs.FINAL_TAG }} \
+          --push \
+          .
+    - name: 'build multi-arch image (dry run)'
+      shell: 'bash'
+      if: "${{ inputs.dry-run == 'true' }}"
+      run: |-
+        docker buildx build \
+          --platform linux/amd64,linux/arm64 \
+          --build-arg CLI_VERSION_ARG=$(jq -r .version package.json) \
+          -t google/gemini-cli-sandbox:${{ steps.image_tag.outputs.FINAL_TAG }} \
+          .
     - name: 'Create issue on failure'
       if: |-
         ${{ failure() }}

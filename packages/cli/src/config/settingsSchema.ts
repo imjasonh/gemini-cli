@@ -1358,9 +1358,10 @@ const SETTINGS_SCHEMA = {
         default: undefined as boolean | string | SandboxConfig | undefined,
         ref: 'BooleanOrStringOrObject',
         description: oneLine`
-          Legacy full-process sandbox execution environment.
-          Set to a boolean to enable or disable the sandbox, provide a string path to a sandbox profile,
-          or specify an explicit sandbox command (e.g., "docker", "podman", "lxc", "windows-native").
+          Sandbox execution environment. Set to true to auto-detect, false to disable,
+          or specify: "docker", "podman", "sandbox-exec" (macOS),
+          "bwrap" (Linux), "landlock" (Linux, recommended),
+          "macos-container" (macOS 15+), "runsc" (gVisor), "lxc", or "windows-native".
         `,
         showInDialog: false,
       },

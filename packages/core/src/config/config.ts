@@ -475,7 +475,10 @@ export interface SandboxConfig {
     | 'sandbox-exec'
     | 'runsc'
     | 'lxc'
-    | 'windows-native';
+    | 'windows-native'
+    | 'bwrap'
+    | 'macos-container'
+    | 'landlock';
   image?: string;
 }
 
