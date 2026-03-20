@@ -161,7 +161,8 @@ export async function parseArguments(
         .option('sandbox', {
           alias: 's',
           type: 'boolean',
-          description: 'Run in sandbox?',
+          description:
+            'Enable sandboxing. Use GEMINI_SANDBOX env to specify a mode: docker, podman, sandbox-exec, bwrap, landlock, macos-container',
         })
 
         .option('yolo', {

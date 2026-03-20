@@ -43,6 +43,13 @@ if (packageName === 'core' && existsSync(bundleScript)) {
 // copy .{md,json} files
 execSync('node ../../scripts/copy_files.js', { stdio: 'inherit' });
 
+// Note: the @google/gemini-cli-landlock package has its own build script in
+// its package.json that runs `napi build` to compile the Rust N-API module.
+// It does NOT use this file. The build script includes an inline platform
+// guard that skips the Rust build on non-Linux platforms and on WSL (where
+// process.platform reports 'linux' but the Rust toolchain targets Windows).
+// The guard reads /proc/version to detect WSL via the "microsoft" marker.
+
 // Copy documentation for the core package
 if (packageName === 'core') {
   const docsSource = join(process.cwd(), '..', '..', 'docs');
